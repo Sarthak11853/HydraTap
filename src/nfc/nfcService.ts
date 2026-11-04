@@ -115,8 +115,9 @@ export async function startForegroundListening(onTag: (uid: string) => void): Pr
         NfcAdapter.FLAG_READER_NFC_A |
         NfcAdapter.FLAG_READER_NFC_B |
         NfcAdapter.FLAG_READER_NFC_F |
-        NfcAdapter.FLAG_READER_NFC_V |
-        NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK,
+        NfcAdapter.FLAG_READER_NFC_V,
+      // No FLAG_READER_SKIP_NDEF_CHECK: registering / re-writing a sticker while this
+      // listener is active needs Android to expose the tag's Ndef technology.
       readerModeDelay: 1000,
     });
   } catch {
@@ -191,23 +192,52 @@ function launcherMessage(): number[] {
   return Ndef.encodeMessage([Ndef.uriRecord(STICKER_URI), Ndef.androidApplicationRecord(ANDROID_PACKAGE)]);
 }
 
+const WRITE_ERRORS = {
+  lost: 'The sticker moved away before HydraTap finished writing. Keep your phone still on it for about 2 seconds and try again.',
+  readOnly: 'This sticker is locked (read-only), so the HydraTap link can’t be written. Use a new NTAG213/215/216 sticker for closed-app tapping.',
+  tooSmall: 'This sticker is too small to hold the HydraTap link.',
+  noNdef: 'This sticker type can’t store the HydraTap link (often MIFARE Classic). NTAG213/215/216 stickers work.',
+};
+
+/** Reads the sticker back to confirm the launch link really landed on it. */
+async function launcherReadsBack(): Promise<boolean> {
+  try {
+    const tag = await NfcManager.ndefHandler.getNdefMessage();
+    const first = tag?.ndefMessage?.[0];
+    if (!first) return false;
+    const uri = Ndef.uri.decodePayload(Uint8Array.from(first.payload));
+    return uri === STICKER_URI;
+  } catch {
+    // Some stickers can't be re-read in the same session; the write itself didn't throw.
+    return true;
+  }
+}
+
 async function tryWriteLauncher(tech: NfcTech | null): Promise<{ ok: boolean; error?: string }> {
   try {
     if (tech === NfcTech.Ndef) {
       const { status, capacity } = await NfcManager.ndefHandler.getNdefStatus();
       const bytes = launcherMessage();
-      if (status !== 2 /* ReadWrite */) return { ok: false, error: 'This sticker is read-only.' };
-      if (capacity > 0 && capacity < bytes.length) return { ok: false, error: 'This sticker is too small.' };
+      if (status === 3 /* ReadOnly */) return { ok: false, error: WRITE_ERRORS.readOnly };
+      if (status !== 2 /* ReadWrite */) return { ok: false, error: WRITE_ERRORS.lost };
+      if (capacity > 0 && capacity < bytes.length) return { ok: false, error: WRITE_ERRORS.tooSmall };
       await NfcManager.ndefHandler.writeNdefMessage(bytes);
-      return { ok: true };
+      return (await launcherReadsBack()) ? { ok: true } : { ok: false, error: WRITE_ERRORS.lost };
     }
     if (tech === NfcTech.NdefFormatable) {
       await NfcManager.ndefFormatableHandlerAndroid.formatNdef(launcherMessage());
       return { ok: true };
     }
-    return { ok: false, error: 'This sticker does not support NDEF.' };
-  } catch (e) {
-    return { ok: false, error: String((e as Error)?.message ?? 'Write failed') };
+    return { ok: false, error: WRITE_ERRORS.noNdef };
+  } catch {
+    // IOException / TagLostException: the tag left the field mid-write.
+    return { ok: false, error: WRITE_ERRORS.lost };
+  }
+}
+
+export class WrongStickerError extends Error {
+  constructor() {
+    super('This isn’t your registered sticker. Tap the sticker you registered in HydraTap.');
   }
 }
 
@@ -222,6 +252,8 @@ async function tryWriteLauncher(tech: NfcTech | null): Promise<{ ok: boolean; er
 export async function readTag(options: {
   alertMessage: string;
   writeLauncher?: boolean;
+  /** If set, a different tag is rejected (before anything is written). */
+  expectUid?: string;
   validate?: (uid: string) => Promise<{ ok: boolean; message: string }>;
 }): Promise<ReadResult> {
   const status = await initNfc();
@@ -237,6 +269,11 @@ export async function readTag(options: {
     if (!uid) {
       if (isIOS) await NfcManager.invalidateSessionWithErrorIOS('This tag has no readable ID.');
       throw new Error('This tag has no readable ID. Try a different NFC sticker (NTAG213/215/216 work well).');
+    }
+
+    if (options.expectUid && options.expectUid !== uid) {
+      if (isIOS) await NfcManager.invalidateSessionWithErrorIOS('Not your registered sticker');
+      throw new WrongStickerError();
     }
 
     let launcherWritten = false;

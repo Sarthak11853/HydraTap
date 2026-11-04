@@ -2,6 +2,7 @@ import * as Haptics from 'expo-haptics';
 import React from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
   Pressable,
   ScrollView,
@@ -323,12 +324,14 @@ export function Sheet({
   const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={styles.sheetBackdrop} onPress={onClose} accessibilityLabel="Close" />
-      <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, spacing.lg) + spacing.sm }]}>
-        <View style={styles.sheetHandle} />
-        <Text style={[type.title, { marginBottom: spacing.lg }]}>{title}</Text>
-        {children}
-      </View>
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
+        <Pressable style={styles.sheetBackdrop} onPress={onClose} accessibilityLabel="Close" />
+        <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, spacing.lg) + spacing.sm }]}>
+          <View style={styles.sheetHandle} />
+          <Text style={[type.title, { marginBottom: spacing.lg }]}>{title}</Text>
+          {children}
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

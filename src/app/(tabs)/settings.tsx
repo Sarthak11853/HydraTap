@@ -124,9 +124,10 @@ export default function SettingsScreen() {
                   title={sticker.launcherWritten ? 'Logs when app is closed' : 'Logs only while app is open'}
                   subtitle={
                     sticker.launcherWritten
-                      ? 'Android opens HydraTap from this sticker and logs instantly.'
-                      : 'Re-register with “Log even when the app is closed” to enable.'
+                      ? 'Android opens HydraTap from this sticker (phone unlocked). Tap to rewrite the link.'
+                      : 'Tap to write the HydraTap link onto your sticker so taps work with the app closed.'
                   }
+                  onPress={() => router.push({ pathname: '/sticker', params: { mode: 'launcher' } })}
                 />
               </>
             )}

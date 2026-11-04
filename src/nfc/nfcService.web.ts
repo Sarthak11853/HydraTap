@@ -22,3 +22,4 @@ export const readTag = async (_o: unknown): Promise<ReadResult> => {
 };
 export const cancelRead = async () => {};
 export const shortcutUrl = (key: string) => `hydratap://log?key=${key}`;
+export class WrongStickerError extends Error {}

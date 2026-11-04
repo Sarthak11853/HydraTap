@@ -25,9 +25,6 @@ export default function Welcome() {
       subtitle="Tap your phone on your bottle's sticker and every sip is logged. Let's set things up — it takes a minute."
       primary={{ title: 'Continue', onPress: next, disabled: trimmed.length === 0 }}
     >
-      <View style={styles.hero}>
-        <WaterBottle progress={0.55} goalReached={false} width={92} />
-      </View>
       <Text style={[type.caption, styles.label]}>What should we call you?</Text>
       <TextInput
         value={name}
@@ -43,12 +40,15 @@ export default function Welcome() {
         onSubmitEditing={() => trimmed && next()}
         accessibilityLabel="Your name"
       />
+      <View style={styles.hero}>
+        <WaterBottle progress={0.55} goalReached={false} width={92} />
+      </View>
     </OnboardingFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  hero: { alignItems: 'center', marginBottom: spacing.xl },
+  hero: { alignItems: 'center', marginTop: spacing.xxl },
   label: { marginBottom: spacing.sm, marginLeft: spacing.xs },
   input: {
     ...type.title,

@@ -1,6 +1,5 @@
 import { router } from 'expo-router';
 import React, { useState } from 'react';
-import { ScrollView } from 'react-native';
 
 import { OnboardingFrame } from '../../components/OnboardingFrame';
 import { StickerRegistration } from '../../components/StickerRegistration';
@@ -21,9 +20,7 @@ export default function StickerStep() {
       primary={registered || nfcStatus === 'unsupported' ? { title: 'Continue', onPress: next } : undefined}
       secondary={!registered && nfcStatus !== 'unsupported' ? { title: settings.sticker ? 'Keep current sticker' : 'Skip for now', onPress: next } : undefined}
     >
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
-        <StickerRegistration onRegistered={() => setRegistered(true)} replacing={!!settings.sticker} />
-      </ScrollView>
+      <StickerRegistration onRegistered={() => setRegistered(true)} replacing={!!settings.sticker} />
     </OnboardingFrame>
   );
 }

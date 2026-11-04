@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import React, { useState } from 'react';
-import { Alert, ScrollView } from 'react-native';
+import { Alert } from 'react-native';
 
 import { OnboardingFrame } from '../../components/OnboardingFrame';
 import { ReminderEditor } from '../../components/ReminderEditor';
@@ -43,11 +43,9 @@ export default function RemindersStep() {
       subtitle="Get a soft nudge through the day. HydraTap stops reminding you once your goal is reached."
       primary={{ title: 'Start hydrating', onPress: finish, loading: saving }}
     >
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <Card style={{ paddingVertical: 8 }}>
-          <ReminderEditor value={reminders} onChange={setReminders} />
-        </Card>
-      </ScrollView>
+      <Card style={{ paddingVertical: 8 }}>
+        <ReminderEditor value={reminders} onChange={setReminders} />
+      </Card>
     </OnboardingFrame>
   );
 }

@@ -37,6 +37,17 @@ allow something, the app says so.
 * Lock screen: AOSP dispatch normally requires an unlocked device. Some OEMs and Android
   versions add a setting for NFC on the lock screen, but third-party apps can't control it.
 
+### Troubleshooting: Android shows an "Empty tag" screen when HydraTap is closed
+
+The sticker doesn't contain the HydraTap launch link, so Android has nothing to open and
+falls back to its built-in tag viewer. Fix: **Settings → NFC sticker → "Logs only while app is
+open"** (or the button on Home), then hold the phone still on the sticker for about 2 s. HydraTap
+writes the link, reads it back to confirm, and from then on a tap opens the app and logs.
+
+Before this fix, reader mode used `FLAG_READER_SKIP_NDEF_CHECK`. That hid the tag's Ndef
+technology, so a sticker registered or replaced from inside the app was never written. Now
+removed.
+
 ## iOS details
 
 * **Entitlement** `com.apple.developer.nfc.readersession.formats` with `TAG` and `NDEF`, and

@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import React from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, radius, spacing, type } from '../theme';
@@ -30,7 +30,8 @@ export function OnboardingFrame({
     <View style={styles.flex}>
       <Backdrop />
       <SafeAreaView style={styles.flex} edges={['top', 'bottom']}>
-        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        {/* Android draws edge-to-edge, so the window no longer resizes for the keyboard; pad on both platforms. */}
+        <KeyboardAvoidingView style={styles.flex} behavior="padding">
           <View style={styles.header}>
             {canGoBack && router.canGoBack() ? (
               <Pressable accessibilityRole="button" accessibilityLabel="Back" hitSlop={12} onPress={() => router.back()} style={styles.back}>
@@ -49,11 +50,17 @@ export function OnboardingFrame({
             <View style={styles.back} />
           </View>
 
-          <View style={styles.body}>
+          <ScrollView
+            style={styles.flex}
+            contentContainerStyle={styles.body}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}
+          >
             <Text style={type.hero}>{title}</Text>
             {subtitle ? <Text style={[type.body, styles.subtitle]}>{subtitle}</Text> : null}
             <View style={styles.content}>{children}</View>
-          </View>
+          </ScrollView>
 
           <View style={styles.footer}>
             {primary && <Button {...primary} />}
@@ -73,8 +80,8 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: radius.pill, backgroundColor: colors.border },
   dotActive: { width: 24, backgroundColor: colors.primary },
   dotDone: { backgroundColor: colors.waterLight },
-  body: { flex: 1, paddingHorizontal: spacing.xl, paddingTop: spacing.xl },
+  body: { flexGrow: 1, paddingHorizontal: spacing.xl, paddingTop: spacing.xl, paddingBottom: spacing.lg },
   subtitle: { color: colors.textMuted, marginTop: spacing.sm, lineHeight: 22 },
-  content: { flex: 1, marginTop: spacing.xl },
-  footer: { paddingHorizontal: spacing.xl, paddingBottom: spacing.md, gap: spacing.xs },
+  content: { marginTop: spacing.xl },
+  footer: { paddingHorizontal: spacing.xl, paddingTop: spacing.sm, paddingBottom: spacing.md, gap: spacing.xs },
 });

@@ -100,8 +100,18 @@ export default function Home() {
           <ActionBlock
             icon="nfc"
             title="Ready — tap your bottle"
-            text={`Hold your phone against the sticker to log ${formatVolume(settings.scanAmountMl)}.${settings.sticker?.launcherWritten ? ' Works even when HydraTap is closed.' : ''}`}
+            text={`Hold your phone against the sticker to log ${formatVolume(settings.scanAmountMl)}.${settings.sticker?.launcherWritten ? ' Works even when HydraTap is closed (phone unlocked).' : ''}`}
             live
+            button={
+              settings.sticker && !settings.sticker.launcherWritten ? (
+                <Button
+                  title="Enable tapping when the app is closed"
+                  icon="sparkle"
+                  variant="secondary"
+                  onPress={() => router.push({ pathname: '/sticker', params: { mode: 'launcher' } })}
+                />
+              ) : undefined
+            }
           />
         )}
         {showManual && (
