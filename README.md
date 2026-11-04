@@ -22,7 +22,34 @@ in SQLite. There is no account and no backend.
 * Local reminders with a custom water-drop sound, an interval and a start/end window. Today's reminders are skipped once the goal is reached, or if you drank recently. They are rescheduled automatically.
 * Optional manual logging, switched on automatically on devices without NFC
 
-## Getting started
+## Install on your phone
+
+The easiest route is a cloud build with EAS. It needs a free Expo account but no Android Studio or Xcode.
+
+**Android** (installs a standalone APK; no computer is needed once it's installed):
+
+```bash
+git clone -b Version1 https://github.com/Sarthak11853/HydraTap.git && cd HydraTap
+npm install
+npx eas-cli@latest login
+npx eas-cli@latest build --profile preview --platform android
+```
+
+The first build asks to create the EAS project and an Android keystore; answer **Yes** to both.
+When the build finishes (about 10–20 min), open the link or scan the QR code on your phone,
+download the `.apk`, and allow "Install unknown apps" when prompted.
+
+**iPhone:** NFC tag reading needs a paid Apple Developer Program membership, because free
+provisioning can't grant the NFC entitlement. With one:
+
+```bash
+npx eas-cli@latest device:create
+npx eas-cli@latest build --profile preview --platform ios
+```
+
+Register your iPhone with the first command, then install the build from the link.
+
+## Getting started (development)
 
 ```bash
 npm install
