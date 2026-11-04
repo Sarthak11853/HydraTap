@@ -23,3 +23,14 @@ export const readTag = async (_o: unknown): Promise<ReadResult> => {
 export const cancelRead = async () => {};
 export const shortcutUrl = (key: string) => `hydratap://log?key=${key}`;
 export class WrongStickerError extends Error {}
+
+export type TapOutcome = 'logged' | 'duplicate' | 'unknown-tag' | 'no-sticker' | 'no-id' | 'ignored-busy' | 'error';
+export interface TapRecord {
+  at: number;
+  uid: string | null;
+  outcome: TapOutcome;
+  via?: 'open' | 'launch' | 'scan' | 'shortcut';
+}
+export const recordTap = (_t: TapRecord) => {};
+export const getLastTap = (): TapRecord | null => null;
+export const subscribeTaps = (_l: (t: TapRecord) => void) => () => {};

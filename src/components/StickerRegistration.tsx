@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
@@ -126,6 +126,19 @@ export function StickerRegistration({
       if (!(e instanceof NfcCancelledError)) setError(String((e as Error)?.message ?? e));
     }
   };
+
+  // Leaving the screen mid-scan must cancel the pending read; otherwise it would keep
+  // swallowing taps (and block Home-screen logging) until the next sticker tap.
+  const scanningRef = useRef(false);
+  useEffect(() => {
+    scanningRef.current = phase === 'scanning';
+  }, [phase]);
+  useEffect(
+    () => () => {
+      if (scanningRef.current) void cancelRead();
+    },
+    [],
+  );
 
   const cancel = async () => {
     await cancelRead();

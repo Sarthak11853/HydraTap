@@ -37,6 +37,8 @@ export const ANDROID_PACKAGE = 'com.hydratap.app';
 let started: Promise<NfcStatus> | null = null;
 /** While a registration read is active, foreground taps must not log water. */
 let captureInProgress = false;
+/** Whether Home-screen tap listening (Android reader mode) is currently registered. */
+let foregroundActive = false;
 
 const isIOS = Platform.OS === 'ios';
 const isAndroid = Platform.OS === 'android';
@@ -97,9 +99,13 @@ export async function startForegroundListening(onTag: (uid: string) => void): Pr
   if (status === 'unsupported') return () => {};
 
   const handler = (tag: TagEvent) => {
-    if (captureInProgress) return;
     const uid = normalizeTagId(tag?.id);
+    if (captureInProgress) {
+      recordTap({ at: Date.now(), uid, outcome: 'ignored-busy' });
+      return;
+    }
     if (uid) onTag(uid);
+    else recordTap({ at: Date.now(), uid: null, outcome: 'no-id' });
   };
   NfcManager.setEventListener(NfcEvents.DiscoverTag, handler);
   // Delivered when Android brings HydraTap to the front for a sticker tap.
@@ -108,6 +114,23 @@ export async function startForegroundListening(onTag: (uid: string) => void): Pr
     handler(tag);
   });
 
+  foregroundActive = true;
+  await enableReaderMode();
+
+  return () => {
+    foregroundActive = false;
+    NfcManager.setEventListener(NfcEvents.DiscoverTag, null);
+    NfcManager.setEventListener(NfcEvents.DiscoverBackgroundTag, null);
+    NfcManager.unregisterTagEvent().catch(() => undefined);
+  };
+}
+
+/**
+ * Reader mode for in-app taps. FLAG_READER_SKIP_NDEF_CHECK keeps discovery fast and
+ * reliable; it hides the Ndef technology, so `readTag` pauses reader mode while it
+ * needs to write to (or inspect) the sticker.
+ */
+async function enableReaderMode() {
   try {
     await NfcManager.registerTagEvent({
       isReaderModeEnabled: true,
@@ -115,20 +138,51 @@ export async function startForegroundListening(onTag: (uid: string) => void): Pr
         NfcAdapter.FLAG_READER_NFC_A |
         NfcAdapter.FLAG_READER_NFC_B |
         NfcAdapter.FLAG_READER_NFC_F |
-        NfcAdapter.FLAG_READER_NFC_V,
-      // No FLAG_READER_SKIP_NDEF_CHECK: registering / re-writing a sticker while this
-      // listener is active needs Android to expose the tag's Ndef technology.
+        NfcAdapter.FLAG_READER_NFC_V |
+        NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK,
       readerModeDelay: 1000,
     });
   } catch {
     // NFC may be off; StateChanged + refresh will retry.
   }
+}
 
-  return () => {
-    NfcManager.setEventListener(NfcEvents.DiscoverTag, null);
-    NfcManager.setEventListener(NfcEvents.DiscoverBackgroundTag, null);
-    NfcManager.unregisterTagEvent().catch(() => undefined);
-  };
+
+/* ------------------------------------------------------------------ */
+/* Tap diagnostics (shown in Settings → "Last tap")                    */
+/* ------------------------------------------------------------------ */
+
+export type TapOutcome =
+  | 'logged'
+  | 'duplicate'
+  | 'unknown-tag'
+  | 'no-sticker'
+  | 'no-id'
+  | 'ignored-busy'
+  | 'error';
+
+export interface TapRecord {
+  at: number;
+  uid: string | null;
+  outcome: TapOutcome;
+  via?: 'open' | 'launch' | 'scan' | 'shortcut';
+}
+
+let lastTap: TapRecord | null = null;
+const tapListeners = new Set<(t: TapRecord) => void>();
+
+export function recordTap(t: TapRecord) {
+  lastTap = t;
+  tapListeners.forEach((l) => l(t));
+}
+
+export function getLastTap(): TapRecord | null {
+  return lastTap;
+}
+
+export function subscribeTaps(l: (t: TapRecord) => void): () => void {
+  tapListeners.add(l);
+  return () => tapListeners.delete(l);
 }
 
 /**
@@ -213,6 +267,18 @@ async function launcherReadsBack(): Promise<boolean> {
   }
 }
 
+/** Strict check used by "Check sticker": true only if the first record is the HydraTap link. */
+async function launcherPresent(): Promise<boolean> {
+  try {
+    const tag = await NfcManager.ndefHandler.getNdefMessage();
+    const first = tag?.ndefMessage?.[0];
+    if (!first) return false;
+    return Ndef.uri.decodePayload(Uint8Array.from(first.payload)) === STICKER_URI;
+  } catch {
+    return false;
+  }
+}
+
 async function tryWriteLauncher(tech: NfcTech | null): Promise<{ ok: boolean; error?: string }> {
   try {
     if (tech === NfcTech.Ndef) {
@@ -254,6 +320,8 @@ export async function readTag(options: {
   writeLauncher?: boolean;
   /** If set, a different tag is rejected (before anything is written). */
   expectUid?: string;
+  /** Android: only check whether the HydraTap launch link is on the sticker (result in launcherWritten). */
+  inspect?: boolean;
   validate?: (uid: string) => Promise<{ ok: boolean; message: string }>;
 }): Promise<ReadResult> {
   const status = await initNfc();
@@ -261,8 +329,16 @@ export async function readTag(options: {
   if (status === 'disabled') throw new Error('NFC is turned off. Turn it on in system settings.');
 
   captureInProgress = true;
+  // Android: reader mode (with SKIP_NDEF_CHECK) hides the Ndef technology. Pause it so
+  // requestTechnology uses normal foreground dispatch, then restore it afterwards.
+  const resumeReaderMode = isAndroid && foregroundActive;
+  if (resumeReaderMode) await NfcManager.unregisterTagEvent().catch(() => undefined);
   try {
-    const techs = isIOS ? IOS_TECHS : options.writeLauncher ? ANDROID_WRITE_TECHS : ANDROID_READ_TECHS;
+    const techs = isIOS
+      ? IOS_TECHS
+      : options.writeLauncher || options.inspect
+        ? ANDROID_WRITE_TECHS
+        : ANDROID_READ_TECHS;
     const tech = await NfcManager.requestTechnology(techs, { alertMessage: options.alertMessage });
     const tag = await NfcManager.getTag(isIOS ? { readNdef: false } : undefined);
     const uid = normalizeTagId(tag?.id);
@@ -282,6 +358,8 @@ export async function readTag(options: {
       const r = await tryWriteLauncher(tech);
       launcherWritten = r.ok;
       launcherError = r.error;
+    } else if (isAndroid && options.inspect) {
+      launcherWritten = tech === NfcTech.Ndef && (await launcherPresent());
     }
 
     if (options.validate) {
@@ -299,6 +377,7 @@ export async function readTag(options: {
     throw e;
   } finally {
     await NfcManager.cancelTechnologyRequest({ delayMsAndroid: 300 }).catch(() => undefined);
+    if (resumeReaderMode && foregroundActive) await enableReaderMode();
     captureInProgress = false;
   }
 }

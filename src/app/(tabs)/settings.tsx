@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Alert, Linking, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { NfcDiagnostics } from '../../components/NfcDiagnostics';
 import { ReminderEditor } from '../../components/ReminderEditor';
 import { Button, Card, ChipGroup, Divider, Row, Screen, SectionTitle, Sheet, Stepper, ToggleRow } from '../../components/ui';
 import { useToast } from '../../components/Toast';
@@ -160,6 +161,15 @@ export default function SettingsScreen() {
           </>
         )}
       </Card>
+
+      {nfcStatus !== 'unsupported' && (
+        <>
+          <SectionTitle>Tap check</SectionTitle>
+          <Card>
+            <NfcDiagnostics />
+          </Card>
+        </>
+      )}
 
       <SectionTitle>Reminders</SectionTitle>
       <Card style={[styles.group, { paddingBottom: spacing.lg }]}>

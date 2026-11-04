@@ -11,9 +11,11 @@ import {
   NfcStatus,
   onNfcStateChange,
   readTag,
+  recordTap,
   refreshNfcStatus,
   startForegroundListening,
   takeLaunchTagUid,
+  TapRecord,
 } from './nfcService';
 
 type Notify = ReturnType<typeof useToast>;
@@ -81,11 +83,13 @@ export function useStickerTapLogging(): { nfcStatus: NfcStatus } {
   }, [settings.goalMl, settings.shortcutKey]);
 
   const onTap = useCallback(
-    async (uid: string | null, source: 'nfc' | 'shortcut') => {
+    async (uid: string | null, source: 'nfc' | 'shortcut', via: TapRecord['via'] = 'open') => {
       try {
         const result = await handleStickerTap(uid, source);
+        recordTap({ at: Date.now(), uid, outcome: result.status, via });
         announce(result, goalRef.current, notify);
       } catch {
+        recordTap({ at: Date.now(), uid, outcome: 'error', via });
         notify({ tone: 'error', title: 'Could not log water', message: 'Please try again.' });
       }
     },
@@ -121,7 +125,7 @@ export function useStickerTapLogging(): { nfcStatus: NfcStatus } {
     });
     const checkLaunchTag = () =>
       takeLaunchTagUid().then((uid) => {
-        if (uid) onTap(uid, 'nfc');
+        if (uid) onTap(uid, 'nfc', 'launch');
       });
     checkLaunchTag();
     const sub = AppState.addEventListener('change', (st) => st === 'active' && checkLaunchTag());
@@ -138,7 +142,7 @@ export function useStickerTapLogging(): { nfcStatus: NfcStatus } {
     const handle = (url: string | null) => {
       const key = parseShortcutKey(url);
       if (!key) return;
-      if (keyRef.current && key === keyRef.current) onTap(null, 'shortcut');
+      if (keyRef.current && key === keyRef.current) onTap(null, 'shortcut', 'shortcut');
       else notify({ tone: 'warning', title: 'Shortcut link not recognised', message: 'Copy the latest link from Settings.' });
     };
     if (!initialUrlHandled) {
@@ -171,6 +175,7 @@ export function useScanToLog() {
         alertMessage: 'Hold your iPhone near your HydraTap sticker',
         validate: async (uid) => {
           result = await handleStickerTap(uid, 'nfc');
+          recordTap({ at: Date.now(), uid, outcome: result.status, via: 'scan' });
           switch (result.status) {
             case 'logged':
               return { ok: true, message: `+${formatVolume(result.entry.amountMl)} logged 💧` };
