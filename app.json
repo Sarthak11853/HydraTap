@@ -1,0 +1,75 @@
+{
+  "expo": {
+    "name": "HydraTap",
+    "slug": "hydratap",
+    "scheme": "hydratap",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F2FAFF",
+    "ios": {
+      "bundleIdentifier": "com.hydratap.app",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.hydratap.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#E3F5FF",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "blockedPermissions": [
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.USE_EXACT_ALARM"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/images/favicon.png",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#0EA5E9",
+          "sounds": [
+            "./assets/sounds/water_drop.wav"
+          ],
+          "enableRemoteNotifications": false
+        }
+      ],
+      [
+        "react-native-nfc-manager",
+        {
+          "nfcPermission": "HydraTap reads your registered water sticker to log a drink when you tap it.",
+          "selectIdentifiers": [
+            "D2760000850101"
+          ],
+          "includeNdefEntitlement": true
+        }
+      ],
+      "./plugins/withNfcLaunchIntent",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "backgroundColor": "#F2FAFF"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
