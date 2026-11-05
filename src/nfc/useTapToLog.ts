@@ -1,9 +1,9 @@
-import * as Linking from 'expo-linking';
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { AppState, Platform } from 'react-native';
+import { AppState, Linking, Platform } from 'react-native';
 
 import { useToast } from '../components/Toast';
 import { formatVolume, remainingMl } from '../domain/format';
+import { parseHydraTapLink } from '../domain/link';
 import { TapResult, useApp } from '../state/AppStore';
 import {
   initNfc,
@@ -14,7 +14,6 @@ import {
   recordTap,
   refreshNfcStatus,
   startForegroundListening,
-  takeLaunchTagUid,
   TapRecord,
 } from './nfcService';
 
@@ -47,27 +46,30 @@ function announce(result: TapResult, goalMl: number, notify: Notify) {
   }
 }
 
-/** Parses `hydratap://log?key=…` (the iOS Shortcuts automation URL). */
-function parseShortcutKey(url: string | null): string | null {
-  if (!url) return null;
-  try {
-    const parsed = Linking.parse(url);
-    const path = (parsed.hostname ?? '') + (parsed.path ?? '');
-    if (!path.replace(/\//g, '').startsWith('log')) return null;
-    const key = parsed.queryParams?.key;
-    return typeof key === 'string' && key.length > 0 ? key : null;
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * Each sticker tap must be handled exactly once. Android NFC launches carry a unique
+ * `t` nonce; links without one (iOS Shortcuts) are handled once per process start.
+ */
+const handledNonces = new Set<string>();
 let initialUrlHandled = false;
 
+function firstTime(nonce: string | null, isInitial: boolean): boolean {
+  if (nonce) {
+    if (handledNonces.has(nonce)) return false;
+    handledNonces.add(nonce);
+    return true;
+  }
+  if (!isInitial) return true;
+  if (initialUrlHandled) return false;
+  initialUrlHandled = true;
+  return true;
+}
+
 /**
- * Mounted once at the root. Wires up every *event-driven* path that can log water:
- *  - Android: reader-mode taps while open, and the launch/resume tag when Android
- *    starts HydraTap from the registered sticker (background / closed app).
- *  - iOS: the Shortcuts automation deep link (`hydratap://log?key=…`).
+ * Mounted once at the root. Wires up every event-driven way a drink is logged:
+ *  - Android, app open: reader-mode taps (UID must match the registered sticker).
+ *  - Android, app in background / closed: the sticker's `hydratap://log?key=…` link
+ *    opens HydraTap; the key must match. Same link for the iOS Shortcuts automation.
  * Nothing here polls.
  */
 export function useStickerTapLogging(): { nfcStatus: NfcStatus } {
@@ -82,10 +84,11 @@ export function useStickerTapLogging(): { nfcStatus: NfcStatus } {
     keyRef.current = settings.shortcutKey;
   }, [settings.goalMl, settings.shortcutKey]);
 
-  const onTap = useCallback(
-    async (uid: string | null, source: 'nfc' | 'shortcut', via: TapRecord['via'] = 'open') => {
+  const log = useCallback(
+    async (uid: string | null, via: TapRecord['via'], byLink: boolean) => {
       try {
-        const result = await handleStickerTap(uid, source);
+        const source = byLink && Platform.OS === 'ios' ? 'shortcut' : 'nfc';
+        const result = await handleStickerTap(uid, source, byLink);
         recordTap({ at: Date.now(), uid, outcome: result.status, via });
         announce(result, goalRef.current, notify);
       } catch {
@@ -98,7 +101,7 @@ export function useStickerTapLogging(): { nfcStatus: NfcStatus } {
 
   const enabled = ready && settings.onboarded;
 
-  // NFC availability + state changes.
+  // NFC availability + on/off changes.
   useEffect(() => {
     if (!ready) return;
     let alive = true;
@@ -114,52 +117,60 @@ export function useStickerTapLogging(): { nfcStatus: NfcStatus } {
     };
   }, [ready]);
 
-  // Android: foreground reader mode + launch tag.
+  // Android, app open: reader mode.
   useEffect(() => {
-    if (!enabled || Platform.OS !== 'android' || nfcStatus === 'unsupported' || nfcStatus === 'unknown') return;
+    if (!enabled || Platform.OS !== 'android' || nfcStatus !== 'ready') return;
     let stop: (() => void) | null = null;
     let cancelled = false;
-    startForegroundListening((uid) => onTap(uid, 'nfc')).then((fn) => {
+    startForegroundListening((uid) => {
+      if (uid) log(uid, 'open', false);
+      else recordTap({ at: Date.now(), uid: null, outcome: 'no-id', via: 'open' });
+    }).then((fn) => {
       if (cancelled) fn();
       else stop = fn;
     });
-    const checkLaunchTag = () =>
-      takeLaunchTagUid().then((uid) => {
-        if (uid) onTap(uid, 'nfc', 'launch');
-      });
-    checkLaunchTag();
-    const sub = AppState.addEventListener('change', (st) => st === 'active' && checkLaunchTag());
     return () => {
       cancelled = true;
       stop?.();
-      sub.remove();
     };
-  }, [enabled, nfcStatus, onTap]);
+  }, [enabled, nfcStatus, log]);
 
-  // iOS Shortcuts automation deep link (works on Android too, harmlessly).
+  // App in background / closed: the sticker link (and iOS Shortcuts) via Linking.
   useEffect(() => {
     if (!enabled) return;
-    const handle = (url: string | null) => {
-      const key = parseShortcutKey(url);
-      if (!key) return;
-      if (keyRef.current && key === keyRef.current) onTap(null, 'shortcut', 'shortcut');
-      else notify({ tone: 'warning', title: 'Shortcut link not recognised', message: 'Copy the latest link from Settings.' });
+    const handle = (url: string | null | undefined, isInitial: boolean) => {
+      const link = parseHydraTapLink(url);
+      if (!link || !firstTime(link.nonce, isInitial)) return;
+      if (link.kind === 'old') {
+        recordTap({ at: Date.now(), uid: null, outcome: 'old-link', via: 'closed' });
+        notify({ tone: 'warning', title: 'Update your sticker', message: 'Tap “Enable tapping when the app is closed” on Home once.' });
+        return;
+      }
+      if (link.key && keyRef.current && link.key === keyRef.current) {
+        log(null, 'closed', true);
+      } else {
+        recordTap({ at: Date.now(), uid: null, outcome: 'bad-key', via: 'closed' });
+        notify({ tone: 'warning', title: 'Sticker link not recognised', message: 'Write the link again: Settings → NFC sticker.' });
+      }
     };
-    if (!initialUrlHandled) {
-      initialUrlHandled = true;
-      Linking.getInitialURL().then(handle);
-    }
-    const sub = Linking.addEventListener('url', ({ url }) => handle(url));
-    return () => sub.remove();
-  }, [enabled, onTap, notify]);
+    // Cold start (and a recreated activity) deliver the link as the initial URL;
+    // re-check it whenever the app comes to the front. Nonces prevent repeats.
+    const checkInitial = () => Linking.getInitialURL().then((url) => handle(url, true));
+    checkInitial();
+    const appSub = AppState.addEventListener('change', (st) => st === 'active' && checkInitial());
+    const sub = Linking.addEventListener('url', ({ url }) => handle(url, false));
+    return () => {
+      sub.remove();
+      appSub.remove();
+    };
+  }, [enabled, log, notify]);
 
   return { nfcStatus };
 }
 
 /**
- * iOS: user-initiated scan from the Home screen. Opens the system NFC sheet and
- * reports the outcome inside the sheet and as a toast. (Also works on Android as an
- * explicit scan, although Android logs automatically while the app is open.)
+ * iOS: user-initiated scan from Home. Opens the system NFC sheet and reports the
+ * outcome inside the sheet and as a toast.
  */
 export function useScanToLog() {
   const { settings, handleStickerTap } = useApp();

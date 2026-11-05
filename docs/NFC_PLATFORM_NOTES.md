@@ -17,36 +17,42 @@ allow something, the app says so.
 
 ## Android details
 
-* **Foreground:** `NfcManager.registerTagEvent({ isReaderModeEnabled: true, … })`.
-  The native module turns reader mode on in `onResume` and off in `onPause`. Tags arrive as
-  events, so JS never polls.
-* **Background or closed:** during registration, HydraTap can (optionally) write this NDEF
-  message to the sticker:
-  1. URI record `hydratap://nfc`
-  2. Android Application Record `com.hydratap.app`
+**App open:** `NfcManager.registerTagEvent({ isReaderModeEnabled: true, … SKIP_NDEF_CHECK })`.
+Reader mode is on only while HydraTap is in front (the native module toggles it on
+resume/pause). Every tap arrives as an event with the hardware UID, which must match the
+registered sticker.
 
-  `plugins/withNfcLaunchIntent.js` adds an `NDEF_DISCOVERED` intent filter for
-  `hydratap://nfc`. Android's tag dispatch then starts (or resumes) `MainActivity` with the tag
-  in the intent. JS reads it with `NfcManager.getBackgroundTag()` (cold start) or the
-  `DiscoverBackgroundTag` / `DiscoverTag` event (resume). The **UID is still checked**, so a copy
-  of the NDEF message on another tag will not log water.
-* Writing replaces the sticker's existing content. Read-only stickers still work while the app
-  is open. The registration screen explains this, and it can be switched off.
-* `android.hardware.nfc` is declared `required="false"` so the app installs on phones without
-  NFC, which fall back to manual logging.
-* Lock screen: AOSP dispatch normally requires an unlocked device. Some OEMs and Android
-  versions add a setting for NFC on the lock screen, but third-party apps can't control it.
+**App in the background or closed:** HydraTap writes this NDEF message onto the sticker
+(Settings → NFC sticker, or the button on Home):
 
-### Troubleshooting: Android shows an "Empty tag" screen when HydraTap is closed
+1. URI record `hydratap://log?key=<secret>`. The secret is generated per install and stored only in the app and on the sticker.
+2. Android Application Record `com.hydratap.app`.
 
-The sticker doesn't contain the HydraTap launch link, so Android has nothing to open and
-falls back to its built-in tag viewer. Fix: **Settings → NFC sticker → "Logs only while app is
-open"** (or the button on Home), then hold the phone still on the sticker for about 2 s. HydraTap
-writes the link, reads it back to confirm, and from then on a tap opens the app and logs.
+`plugins/withNfcLaunchIntent.js` adds an `NDEF_DISCOVERED` intent filter for
+`hydratap://log`. When you tap, Android's tag dispatch opens `MainActivity` with that link,
+and React Native's own `Linking` delivers it to JS:
+* `getInitialURL()` on a cold start;
+* the `url` event when the app was in the background.
 
-Before this fix, reader mode used `FLAG_READER_SKIP_NDEF_CHECK`. That hid the tag's Ndef
-technology, so a sticker registered or replaced from inside the app was never written. Now
-removed.
+React Native explicitly supports `NDEF_DISCOVERED` here. JS checks the key and logs the drink.
+
+`MainActivity` (patched by the plugin):
+* stamps every NFC launch with a unique `t` parameter, so each tap is handled exactly once, even if the activity is recreated;
+* drops the intent when the app is reopened from Recents, so an old tap isn't replayed;
+* calls `setShowWhenLocked(true)` for that tap, so the confirmation can appear over the lock screen on phones that read NFC while locked.
+
+**Screen off / lock screen:**
+* With the screen **off**, Android doesn't power the NFC reader at all. No app can change this.
+* On the **lock screen**, stickers are only read if the phone allows it. On Android 12+ that's the *Require device unlock for NFC* setting: turn it **off** under Settings → Connected devices → Connection preferences → NFC (Samsung: Connections → NFC). Some phones don't offer it.
+
+### Troubleshooting: Android shows an "Empty tag" screen
+
+The sticker doesn't hold the HydraTap link, so Android falls back to its own tag viewer.
+1. Open **Settings → Tap check → Check my sticker** to confirm.
+2. Then tap **Write the link now** (or *Enable tapping when the app is closed* on Home) and hold the phone still on the sticker for about 2 s. The link is read back after writing to confirm it.
+
+Stickers written by builds 1–3 carry an old link without a key. HydraTap shows "Update your
+sticker" for those; rewrite them once.
 
 ## iOS details
 

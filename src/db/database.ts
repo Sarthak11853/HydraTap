@@ -2,7 +2,7 @@ import * as SQLite from 'expo-sqlite';
 
 import { dayKey } from '../domain/dates';
 import type { DaySummary, IntakeEntry, IntakeSource, Settings } from '../domain/types';
-import { DEFAULT_SETTINGS } from '../domain/types';
+import { DEFAULT_SETTINGS, LINK_VERSION } from '../domain/types';
 
 /**
  * Local, offline SQLite storage.
@@ -79,7 +79,10 @@ export async function loadSettings(): Promise<Settings> {
     }
   }
   const s = merged as unknown as Settings;
-  return { ...s, reminders: { ...DEFAULT_SETTINGS.reminders, ...s.reminders } };
+  // Stickers written by early builds carry the old `hydratap://nfc` link (no key):
+  // they need the new link before closed-app tapping works.
+  const sticker = s.sticker && s.sticker.linkVersion !== LINK_VERSION ? { ...s.sticker, launcherWritten: false } : s.sticker;
+  return { ...s, sticker, reminders: { ...DEFAULT_SETTINGS.reminders, ...s.reminders } };
 }
 
 export async function saveSettings(patch: Partial<Settings>): Promise<void> {

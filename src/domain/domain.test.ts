@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { dayKey, formatMinutes, formatDayLabel, msUntilNextMidnight } from './dates.ts';
+import { parseHydraTapLink } from './link.ts';
 import { formatVolume, progressPercent, remainingMl, snap } from './format.ts';
 import { normalizeTagId, isSameTag, isDuplicateScan, maskTagId, generateKey } from './tag.ts';
 import { planReminders, reminderSlots, MAX_PENDING_REMINDERS } from './reminders.ts';
@@ -116,4 +117,16 @@ test('planReminders with 30 minute interval stays within budget', () => {
   const s = { ...base, intervalMin: 30, startMin: 0, endMin: 23 * 60 + 30 };
   const plan = planReminders({ now: at(2026, 11, 4, 0, 5), settings: s, todayTotalMl: 0, goalMl: 2000, lastIntakeAt: null });
   assert.equal(plan.length, MAX_PENDING_REMINDERS);
+});
+
+
+test('parseHydraTapLink', () => {
+  assert.deepEqual(parseHydraTapLink('hydratap://log?key=abc123'), { kind: 'log', key: 'abc123', nonce: null });
+  assert.deepEqual(parseHydraTapLink('hydratap://log?key=abc123&t=1730000000000'), { kind: 'log', key: 'abc123', nonce: '1730000000000' });
+  assert.deepEqual(parseHydraTapLink('hydratap://nfc?t=5'), { kind: 'old', nonce: '5' });
+  assert.deepEqual(parseHydraTapLink('hydratap://nfc'), { kind: 'old', nonce: null });
+  assert.deepEqual(parseHydraTapLink('hydratap://log'), { kind: 'log', key: null, nonce: null });
+  assert.equal(parseHydraTapLink('hydratap://settings'), null);
+  assert.equal(parseHydraTapLink('https://example.com/log?key=x'), null);
+  assert.equal(parseHydraTapLink(null), null);
 });

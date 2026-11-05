@@ -10,9 +10,10 @@ import Animated, {
   ZoomIn,
 } from 'react-native-reanimated';
 
-import { maskTagId } from '../domain/tag';
+import { generateKey, maskTagId } from '../domain/tag';
 import type { StickerInfo } from '../domain/types';
-import { cancelRead, NfcCancelledError, openNfcSettings, readTag } from '../nfc/nfcService';
+import { LINK_VERSION } from '../domain/types';
+import { cancelRead, NfcCancelledError, openNfcSettings, readTag, stickerLink } from '../nfc/nfcService';
 import { useNfcStatus } from '../nfc/useTapToLog';
 import { useApp } from '../state/AppStore';
 import { colors, radius, spacing, type } from '../theme';
@@ -77,18 +78,29 @@ export function StickerRegistration({
     }
   }, [nfcStatus, settings.allowManualLogging, updateSettings]);
 
+  /** The secret-key link written to the sticker (key created on first use). */
+  const linkForSticker = async (): Promise<string> => {
+    let key = settings.shortcutKey;
+    if (!key) {
+      key = generateKey();
+      await updateSettings({ shortcutKey: key });
+    }
+    return stickerLink(key);
+  };
+
   /** Writes the launch link onto the given (already registered) sticker. */
   const writeLink = async (sticker: StickerInfo) => {
     setError(null);
     setPhase('scanning');
     try {
-      const r = await readTag({ alertMessage: 'Hold your phone on the sticker', writeLauncher: true, expectUid: sticker.uid });
-      if (!r.launcherWritten) {
-        setError(r.launcherError ?? 'The HydraTap link could not be written.');
+      const link = await linkForSticker();
+      const r = await readTag({ alertMessage: 'Hold your phone on the sticker', writeLink: link, expectUid: sticker.uid });
+      if (!r.linkOk) {
+        setError(r.linkError ?? 'The HydraTap link could not be written.');
         setPhase('needsLauncher');
         return;
       }
-      const next = { ...sticker, launcherWritten: true };
+      const next = { ...sticker, launcherWritten: true, linkVersion: LINK_VERSION };
       await updateSettings({ sticker: next });
       setResult({ sticker: next, sameAsBefore: true });
       setPhase('done');
@@ -106,17 +118,22 @@ export function StickerRegistration({
       const wantLink = Platform.OS === 'android' && writeLauncher;
       const r = await readTag({
         alertMessage: 'Hold your iPhone near the sticker you want to register',
-        writeLauncher: wantLink,
+        writeLink: wantLink ? await linkForSticker() : undefined,
         validate: async () => ({ ok: true, message: 'Sticker registered ✓' }),
       });
-      const sticker: StickerInfo = { uid: r.uid, registeredAt: Date.now(), launcherWritten: r.launcherWritten };
+      const sticker: StickerInfo = {
+        uid: r.uid,
+        registeredAt: Date.now(),
+        launcherWritten: r.linkOk,
+        linkVersion: r.linkOk ? LINK_VERSION : undefined,
+      };
       const sameAsBefore = settings.sticker?.uid === r.uid;
       await updateSettings({ sticker });
       setResult({ sticker, sameAsBefore });
       onRegistered?.(sticker);
-      if (wantLink && !r.launcherWritten) {
+      if (wantLink && !r.linkOk) {
         // Registered, but closed-app tapping isn't set up yet: offer a retry.
-        setError(r.launcherError ?? 'The HydraTap link could not be written.');
+        setError(r.linkError ?? 'The HydraTap link could not be written.');
         setPhase('needsLauncher');
       } else {
         setPhase('done');

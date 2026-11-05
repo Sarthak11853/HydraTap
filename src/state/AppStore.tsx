@@ -28,8 +28,12 @@ interface AppStore {
   /** Increments on every history change so screens can refetch. */
   revision: number;
   updateSettings: (patch: Partial<Settings>) => Promise<void>;
-  /** Single entry point for sticker taps (NFC UID) and Shortcut deep links (uid = null). */
-  handleStickerTap: (uid: string | null, source: Exclude<IntakeSource, 'manual'>) => Promise<TapResult>;
+  /**
+   * Single entry point for sticker taps. In-app taps pass the tag UID; taps that
+   * arrive through the sticker link (app closed / iOS Shortcut) pass `byLink`,
+   * whose secret key the caller has already verified.
+   */
+  handleStickerTap: (uid: string | null, source: Exclude<IntakeSource, 'manual'>, byLink?: boolean) => Promise<TapResult>;
   logManual: (amountMl?: number) => Promise<IntakeEntry>;
   deleteEntry: (id: number) => Promise<void>;
   refreshToday: () => Promise<void>;
@@ -155,11 +159,11 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const handleStickerTap = useCallback<AppStore['handleStickerTap']>(
-    (uid, source) =>
+    (uid, source, byLink = false) =>
       withLock(async (): Promise<TapResult> => {
         const s = settingsRef.current;
         if (!s.sticker) return { status: 'no-sticker' };
-        if (source === 'nfc' && !isSameTag(uid, s.sticker.uid)) return { status: 'unknown-tag' };
+        if (!byLink && !isSameTag(uid, s.sticker.uid)) return { status: 'unknown-tag' };
         const last = await db.getLastScanAt();
         if (isDuplicateScan(last, Date.now(), LIMITS.scanCooldownMs)) return { status: 'duplicate' };
         const r = await insert(s.scanAmountMl, source, source === 'nfc' ? s.sticker.uid : null);

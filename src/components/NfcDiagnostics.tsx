@@ -9,6 +9,7 @@ import {
   getLastTap,
   NfcCancelledError,
   readTag,
+  stickerLink,
   subscribeTaps,
   TapOutcome,
   TapRecord,
@@ -24,15 +25,15 @@ const OUTCOME: Record<TapOutcome, { text: string; ok: boolean }> = {
   'unknown-tag': { text: 'Ignored — not your registered sticker', ok: false },
   'no-sticker': { text: 'Ignored — no sticker registered', ok: false },
   'no-id': { text: 'Tag had no readable ID', ok: false },
-  'ignored-busy': { text: 'Ignored — a sticker scan screen was open', ok: false },
+  'old-link': { text: 'Sticker has the old link — write the new one', ok: false },
+  'bad-key': { text: 'Sticker link doesn’t match — write it again', ok: false },
   error: { text: 'Error while saving', ok: false },
 };
 
-const VIA: Record<NonNullable<TapRecord['via']>, string> = {
+const VIA: Record<TapRecord['via'], string> = {
   open: 'app open',
-  launch: 'app opened by the sticker',
+  closed: 'app opened by the sticker',
   scan: 'Scan button',
-  shortcut: 'Shortcut',
 };
 
 const STATUS_TEXT = { ready: 'On', disabled: 'Off — turn on NFC', unsupported: 'Not available', unknown: 'Checking…' } as const;
@@ -59,8 +60,8 @@ export function NfcDiagnostics() {
     setChecking(true);
     checkingRef.current = true;
     try {
-      const r = await readTag({ alertMessage: 'Hold your phone on the sticker', inspect: true });
-      setCheck({ same: r.uid === settings.sticker?.uid, uid: r.uid, link: r.launcherWritten });
+      const r = await readTag({ alertMessage: 'Hold your phone on the sticker', checkLink: stickerLink(settings.shortcutKey) });
+      setCheck({ same: r.uid === settings.sticker?.uid, uid: r.uid, link: r.linkOk });
     } catch (e) {
       if (!(e instanceof NfcCancelledError)) setCheck({ error: String((e as Error)?.message ?? e) });
     } finally {
@@ -76,7 +77,7 @@ export function NfcDiagnostics() {
         label="Last tap"
         value={
           last
-            ? `${formatClock(last.at)} · ${last.uid ? maskTagId(last.uid) : 'no ID'}${last.via ? ` · ${VIA[last.via]}` : ''}`
+            ? `${formatClock(last.at)} · ${last.uid ? maskTagId(last.uid) : last.via === 'closed' ? 'sticker link' : 'no ID'} · ${VIA[last.via]}`
             : 'None since the app started'
         }
       />

@@ -4,8 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ModalHeader } from '../components/ModalHeader';
 import { Backdrop, Button, Card } from '../components/ui';
-import { generateKey } from '../domain/tag';
-import { shortcutUrl } from '../nfc/nfcService';
+import { stickerLink } from '../nfc/nfcService';
 import { useApp } from '../state/AppStore';
 import { colors, radius, spacing, type } from '../theme';
 
@@ -23,8 +22,8 @@ const STEPS = [
  * trigger on a specific NFC tag — so HydraTap exposes a secret deep link for it.
  */
 export default function IosShortcutScreen() {
-  const { settings, updateSettings } = useApp();
-  const url = shortcutUrl(settings.shortcutKey);
+  const { settings } = useApp();
+  const url = stickerLink(settings.shortcutKey);
 
   return (
     <View style={{ flex: 1 }}>
@@ -55,11 +54,6 @@ export default function IosShortcutScreen() {
             </Text>
           </View>
           <Button title="Share / copy link" icon="shortcut" onPress={() => Share.share({ message: url })} style={{ marginTop: spacing.md }} />
-          <Button
-            title="Generate a new link"
-            variant="ghost"
-            onPress={() => updateSettings({ shortcutKey: generateKey() })}
-          />
           <Text style={[type.caption, { marginTop: spacing.md, lineHeight: 19 }]}>
             Notes: the automation identifies your sticker inside Shortcuts, and the link contains a private key so other
             links can’t add water. iOS may show a brief banner when the automation runs. Automations generally don’t
