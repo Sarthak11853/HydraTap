@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
+import { importPendingTaps, writeBridgeState } from '../bridge/tapBridge';
 import * as db from '../db/database';
 import { dayKey, msUntilNextMidnight } from '../domain/dates';
 import { isDuplicateScan, isSameTag } from '../domain/tag';
@@ -88,6 +89,7 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
         if (!alive) return;
         setSettings(s);
         settingsRef.current = s;
+        await importPendingTaps(db.importTap).catch(() => 0);
         await loadToday();
       } catch (e) {
         setError(String((e as Error)?.message ?? e));
@@ -115,17 +117,46 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       if (state === 'active') {
         clearTimeout(timer);
         arm();
-        // Drinks may have been logged while closed (Android sticker taps): refresh all.
-        loadToday()
-          .then(() => setRevision((r) => r + 1))
-          .catch(() => undefined);
+        // Drinks may have been logged while closed (Android sticker taps): import them
+        // into the database, then refresh everything.
+        withLock(async () => {
+          await importPendingTaps(db.importTap).catch(() => 0);
+          await loadToday();
+          setRevision((r) => r + 1);
+        }).catch(() => undefined);
       }
     });
     return () => {
       clearTimeout(timer);
       sub.remove();
     };
-  }, [ready, loadToday]);
+  }, [ready, loadToday, withLock]);
+
+  // Tell the native closed-app tap logger who the sticker is and where today stands.
+  useEffect(() => {
+    if (!ready) return;
+    let alive = true;
+    db.getLastScanAt()
+      .then((lastScanAt) => {
+        if (!alive) return;
+        return writeBridgeState({
+          v: 1,
+          onboarded: settings.onboarded,
+          stickerUid: settings.sticker?.uid ?? null,
+          linkKey: settings.shortcutKey,
+          goalMl: settings.goalMl,
+          scanAmountMl: settings.scanAmountMl,
+          reminders: settings.reminders,
+          day: today.day,
+          todayTotalMl: today.totalMl,
+          lastScanAt,
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [ready, settings, today]);
 
   // Keep the reminder window in sync with progress and settings (debounced).
   const lastIntakeAt = today.entries[0]?.createdAt ?? null;

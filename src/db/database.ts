@@ -19,16 +19,62 @@ let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 export function getDb(): Promise<SQLite.SQLiteDatabase> {
   if (!dbPromise) {
-    dbPromise = (async () => {
-      const db = await SQLite.openDatabaseAsync(DB_NAME);
-      await migrate(db);
-      return db;
-    })().catch((e) => {
+    dbPromise = openHealthyDb().catch((e) => {
       dbPromise = null;
       throw e;
     });
   }
   return dbPromise;
+}
+
+async function openHealthyDb(): Promise<SQLite.SQLiteDatabase> {
+  let db: SQLite.SQLiteDatabase | null = null;
+  try {
+    db = await SQLite.openDatabaseAsync(DB_NAME);
+    await migrate(db);
+    const check = await db.getFirstAsync<{ quick_check: string }>('PRAGMA quick_check');
+    if (check?.quick_check === 'ok') return db;
+  } catch {
+    // fall through to repair
+  }
+  return repairDb(db);
+}
+
+/**
+ * Last-resort repair (an earlier build's background logger wrote this file with a
+ * second SQLite library, which could damage it): salvage every readable row, then
+ * rebuild the database from scratch.
+ */
+async function repairDb(broken: SQLite.SQLiteDatabase | null): Promise<SQLite.SQLiteDatabase> {
+  let settingsRows: { key: string; value: string }[] = [];
+  let intakeRows: Record<string, unknown>[] = [];
+  if (broken) {
+    settingsRows = await broken.getAllAsync<{ key: string; value: string }>('SELECT key, value FROM settings').catch(() => []);
+    intakeRows = await broken.getAllAsync<Record<string, unknown>>('SELECT * FROM intake ORDER BY created_at').catch(() => []);
+    await broken.closeAsync().catch(() => undefined);
+  }
+  await SQLite.deleteDatabaseAsync(DB_NAME).catch(() => undefined);
+  const db = await SQLite.openDatabaseAsync(DB_NAME);
+  await migrate(db);
+  await db.withTransactionAsync(async () => {
+    for (const r of settingsRows) {
+      await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', r.key, r.value).catch(() => undefined);
+    }
+    for (const r of intakeRows) {
+      await db
+        .runAsync(
+          'INSERT INTO intake (amount_ml, goal_ml, created_at, day, source, tag_id) VALUES (?, ?, ?, ?, ?, ?)',
+          Number(r.amount_ml),
+          Number(r.goal_ml),
+          Number(r.created_at),
+          String(r.day),
+          String(r.source),
+          (r.tag_id as string | null) ?? null,
+        )
+        .catch(() => undefined);
+    }
+  });
+  return db;
 }
 
 async function migrate(db: SQLite.SQLiteDatabase) {
@@ -149,6 +195,17 @@ export async function insertIntake(input: {
     source: input.source,
     tagId: input.tagId ?? null,
   };
+}
+
+/** Imports a tap logged by the native closed-app logger; skips it if already imported. */
+export async function importTap(tap: { at: number; amountMl: number; goalMl: number; tagId: string | null }): Promise<void> {
+  const db = await getDb();
+  const exists = await db.getFirstAsync<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM intake WHERE created_at = ? AND source = 'nfc'",
+    tap.at,
+  );
+  if (exists && exists.n > 0) return;
+  await insertIntake({ amountMl: tap.amountMl, goalMl: tap.goalMl, source: 'nfc', tagId: tap.tagId, createdAt: tap.at });
 }
 
 export async function deleteIntake(id: number): Promise<void> {

@@ -70,6 +70,8 @@ export async function insertIntake(input: {
   return e;
 }
 
+export async function importTap(_t: { at: number; amountMl: number; goalMl: number; tagId: string | null }): Promise<void> {}
+
 export async function deleteIntake(id: number): Promise<void> {
   rows = rows.filter((r) => r.id !== id);
 }

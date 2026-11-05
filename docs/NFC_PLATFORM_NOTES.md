@@ -39,7 +39,7 @@ activity in its own task, excluded from Recents. It registers for:
 * `NDEF_DISCOVERED` for `hydratap://…` (stickers written by builds 4–6).
 
 It reads the hardware UID from the intent. If it matches the registered sticker, it:
-1. writes the drink directly into HydraTap's SQLite database (same schema, 8 s duplicate protection);
+1. records the drink as one small JSON file in `filesDir/hydratap-bridge/taps/` (8 s duplicate protection). The app imports these files into SQLite (idempotently) whenever it starts or comes to the front, then deletes them. The native side **never opens the SQLite database**: the app uses expo-sqlite's bundled SQLite, and a second SQLite library in the same process can't coordinate file locks. Build 6/7 did that, which made the app miss the drinks and fail the next write; the app now runs `PRAGMA quick_check` at startup and rebuilds a damaged database from every readable row. The app keeps `hydratap-bridge/state.json` (sticker ID, goal, amount per tap, today's total, last tap) up to date for the native side;
 2. cancels today's remaining reminders once the goal is reached (deterministic reminder ids);
 3. shows a toast ("💧 +250 ml · 1.25 L to go") and a short vibration;
 4. finishes in `onCreate`.
