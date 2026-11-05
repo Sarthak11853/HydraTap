@@ -189,7 +189,7 @@ export function StickerRegistration({
         <Text style={[type.caption, styles.centerText]}>ID {maskTagId(result.sticker.uid)}</Text>
         {Platform.OS === 'android' && result.sticker.launcherWritten && (
           <Text style={[type.caption, styles.centerText, { marginTop: spacing.sm }]}>
-            Tap-to-log now works even when HydraTap is closed (phone unlocked).
+            Tapping now logs in the background with a small alert, even when HydraTap is closed.
           </Text>
         )}
       </View>
@@ -239,7 +239,7 @@ export function StickerRegistration({
               ? 'Tap the back of your phone on the sticker.'
               : 'Hold the back of your phone against the sticker until it vibrates.'
             : launcherOnly
-              ? 'HydraTap writes a small link onto your registered sticker so Android opens HydraTap when you tap it, even when the app is closed. Tap “Scan sticker”, then tap your phone on the sticker.'
+              ? 'HydraTap writes a small link onto your registered sticker so taps log in the background when the app is closed, even when the app is closed. Tap “Scan sticker”, then tap your phone on the sticker.'
               : Platform.OS === 'ios'
               ? 'Stick it on your bottle, tap “Scan sticker”, then hold the top of your iPhone near it.'
               : 'Stick it on your bottle, tap “Scan sticker”, then hold the back of your phone near it.'}

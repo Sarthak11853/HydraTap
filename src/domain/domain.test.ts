@@ -6,7 +6,7 @@ import { dayKey, formatMinutes, formatDayLabel, msUntilNextMidnight } from './da
 import { parseHydraTapLink } from './link.ts';
 import { formatVolume, progressPercent, remainingMl, snap } from './format.ts';
 import { normalizeTagId, isSameTag, isDuplicateScan, maskTagId, generateKey } from './tag.ts';
-import { planReminders, reminderSlots, MAX_PENDING_REMINDERS } from './reminders.ts';
+import { planReminders, reminderId, reminderSlots, MAX_PENDING_REMINDERS } from './reminders.ts';
 import type { ReminderSettings } from './types.ts';
 
 const at = (y: number, mo: number, d: number, h = 0, mi = 0) => new Date(y, mo - 1, d, h, mi).getTime();
@@ -129,4 +129,10 @@ test('parseHydraTapLink', () => {
   assert.equal(parseHydraTapLink('hydratap://settings'), null);
   assert.equal(parseHydraTapLink('https://example.com/log?key=x'), null);
   assert.equal(parseHydraTapLink(null), null);
+});
+
+test('reminderId matches the native format hydratap-reminder-YYYY-MM-DD-MMMM', () => {
+  assert.equal(reminderId(at(2026, 11, 4, 9, 0)), 'hydratap-reminder-2026-11-04-0540');
+  assert.equal(reminderId(at(2026, 1, 5, 0, 30)), 'hydratap-reminder-2026-01-05-0030');
+  assert.equal(reminderId(at(2026, 1, 5, 21, 0)), 'hydratap-reminder-2026-01-05-1260');
 });

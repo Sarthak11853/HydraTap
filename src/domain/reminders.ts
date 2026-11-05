@@ -1,5 +1,5 @@
 import type { ReminderSettings } from './types.ts';
-import { addDays, startOfDay } from './dates.ts';
+import { addDays, dayKey, startOfDay } from './dates.ts';
 
 /** iOS keeps at most 64 pending local notifications per app; stay safely below. */
 export const MAX_PENDING_REMINDERS = 60;
@@ -81,4 +81,14 @@ export function reminderMessage(index: number, isToday: boolean, remaining: stri
   const title = 'Time to hydrate';
   if (isToday) return { title, body: TODAY_LINES[index % TODAY_LINES.length](remaining) };
   return { title, body: GENERIC_LINES[index % GENERIC_LINES.length] };
+}
+
+/**
+ * Deterministic notification id `hydratap-reminder-YYYY-MM-DD-MMMM` (minute of day).
+ * The native closed-app tap logger (plugins/withNfcLaunchIntent.js) builds the same
+ * ids to cancel today's remaining reminders once the goal is reached — keep in sync.
+ */
+export function reminderId(at: number): string {
+  const d = new Date(at);
+  return `hydratap-reminder-${dayKey(at)}-${String(d.getHours() * 60 + d.getMinutes()).padStart(4, '0')}`;
 }

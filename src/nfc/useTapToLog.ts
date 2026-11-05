@@ -68,8 +68,8 @@ function firstTime(nonce: string | null, isInitial: boolean): boolean {
 /**
  * Mounted once at the root. Wires up every event-driven way a drink is logged:
  *  - Android, app open: reader-mode taps (UID must match the registered sticker).
- *  - Android, app in background / closed: the sticker's `hydratap://log?key=…` link
- *    opens HydraTap; the key must match. Same link for the iOS Shortcuts automation.
+ *  - iOS Shortcuts automation: the `hydratap://log?key=…` link; the key must match.
+ *    (On Android, closed-app taps are logged natively by NfcTapActivity.)
  * Nothing here polls.
  */
 export function useStickerTapLogging(): { nfcStatus: NfcStatus } {

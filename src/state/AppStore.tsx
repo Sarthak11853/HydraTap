@@ -115,7 +115,10 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
       if (state === 'active') {
         clearTimeout(timer);
         arm();
-        loadToday().catch(() => undefined);
+        // Drinks may have been logged while closed (Android sticker taps): refresh all.
+        loadToday()
+          .then(() => setRevision((r) => r + 1))
+          .catch(() => undefined);
       }
     });
     return () => {

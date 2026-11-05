@@ -3,7 +3,7 @@ import * as Notifications from 'expo-notifications';
 import { AndroidImportance } from 'expo-notifications';
 
 import { formatVolume, remainingMl } from '../domain/format';
-import { planReminders, reminderMessage } from '../domain/reminders';
+import { planReminders, reminderId, reminderMessage } from '../domain/reminders';
 import type { ReminderSettings } from '../domain/types';
 
 /**
@@ -93,6 +93,7 @@ export function syncReminders(input: {
         const p = plan[i];
         const { title, body } = reminderMessage(i, p.isToday, remaining);
         await Notifications.scheduleNotificationAsync({
+          identifier: reminderId(p.at),
           content: {
             title,
             body,

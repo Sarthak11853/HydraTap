@@ -36,18 +36,21 @@ Supported stickers: NTAG213/215/216 and MIFARE Ultralight (the common NFC sticke
 1. URI record `hydratap://log?key=<secret>`. The secret is generated per install and stored only in the app and on the sticker.
 2. Android Application Record `com.hydratap.app`.
 
-`plugins/withNfcLaunchIntent.js` adds an `NDEF_DISCOVERED` intent filter for
-`hydratap://log`. When you tap, Android's tag dispatch opens `MainActivity` with that link,
-and React Native's own `Linking` delivers it to JS:
-* `getInitialURL()` on a cold start;
-* the `url` event when the app was in the background.
+An NFC tap can only start an *Activity*; Android has no way to deliver a tag to a
+background service. So `plugins/withNfcLaunchIntent.js` generates **`NfcTapActivity`**:
+an invisible, translucent activity with an `NDEF_DISCOVERED` filter for `hydratap://log`.
+It runs in its own task and is excluded from Recents. It:
+* checks the key, then writes the drink directly into HydraTap's SQLite database (same schema, 8 s duplicate protection);
+* cancels today's remaining reminders if the goal was just reached (deterministic reminder ids);
+* shows a small toast ("💧 +250 ml · 1.25 L to go") and a short vibration, then finishes in `onCreate`.
 
-React Native explicitly supports `NDEF_DISCOVERED` here. JS checks the key and logs the drink.
+HydraTap's UI never opens: whatever was on screen (home screen, another app, the lock
+screen) stays there. When you next open HydraTap, it reloads today's totals and the
+history and re-plans reminders.
 
-`MainActivity` (patched by the plugin):
-* stamps every NFC launch with a unique `t` parameter, so each tap is handled exactly once, even if the activity is recreated;
-* drops the intent when the app is reopened from Recents, so an old tap isn't replayed;
-* calls `setShowWhenLocked(true)` for that tap, so the confirmation can appear over the lock screen on phones that read NFC while locked.
+`NfcTapActivity` also:
+* calls `setShowWhenLocked(true)`, so it can run over the lock screen;
+* ignores intents replayed from Recents.
 
 **Screen off / lock screen:**
 * With the screen **off**, Android doesn't power the NFC reader at all. No app can change this.

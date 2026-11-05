@@ -100,7 +100,7 @@ export default function Home() {
           <ActionBlock
             icon="nfc"
             title="Ready — tap your bottle"
-            text={`Hold your phone against the sticker to log ${formatVolume(settings.scanAmountMl)}.${settings.sticker?.launcherWritten ? ' Works even when HydraTap is closed (phone unlocked).' : ''}`}
+            text={`Hold your phone against the sticker to log ${formatVolume(settings.scanAmountMl)}.${settings.sticker?.launcherWritten ? ' Also works with HydraTap closed — it logs in the background.' : ''}`}
             live
             button={
               settings.sticker && !settings.sticker.launcherWritten ? (
