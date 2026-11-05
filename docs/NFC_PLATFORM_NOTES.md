@@ -22,6 +22,14 @@ Reader mode is on only while HydraTap is in front (the native module toggles it 
 resume/pause). Every tap arrives as an event with the hardware UID, which must match the
 registered sticker.
 
+**One reader mode for everything:** in-app logging, registration (the UID of a single quick
+tap) and writing/checking the link all run in reader mode with `SKIP_NDEF_CHECK`. On the
+test phone this was the only mode that worked reliably: a build without the flag stopped
+in-app taps, and a build using tag dispatch for registration hung on "Ready to scan". The
+link is written with raw NFC Forum Type 2 commands (`src/nfc/type2.ts`: READ 0x30 /
+WRITE 0xA2, capability container, NDEF TLV), unit-tested against a simulated NTAG213.
+Supported stickers: NTAG213/215/216 and MIFARE Ultralight (the common NFC stickers).
+
 **App in the background or closed:** HydraTap writes this NDEF message onto the sticker
 (Settings → NFC sticker, or the button on Home):
 
@@ -49,7 +57,7 @@ React Native explicitly supports `NDEF_DISCOVERED` here. JS checks the key and l
 
 The sticker doesn't hold the HydraTap link, so Android falls back to its own tag viewer.
 1. Open **Settings → Tap check → Check my sticker** to confirm.
-2. Then tap **Write the link now** (or *Enable tapping when the app is closed* on Home) and hold the phone still on the sticker for about 2 s. The link is read back after writing to confirm it.
+2. Then tap **Write the link now** (or *Enable tapping when the app is closed* on Home) then tap the sticker once. The link is read back after writing to confirm it.
 
 Stickers written by builds 1–3 carry an old link without a key. HydraTap shows "Update your
 sticker" for those; rewrite them once.

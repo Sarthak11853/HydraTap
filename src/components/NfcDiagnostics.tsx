@@ -106,7 +106,7 @@ export function NfcDiagnostics() {
           )}
           {checking ? (
             <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
-              <Text style={[type.caption, { textAlign: 'center' }]}>Hold your phone still on the sticker…</Text>
+              <Text style={[type.caption, { textAlign: 'center' }]}>Tap your phone on the sticker…</Text>
               <Button title="Cancel" variant="secondary" onPress={() => cancelRead()} />
             </View>
           ) : (

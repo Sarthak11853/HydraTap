@@ -13,7 +13,7 @@ import {
   readTag,
   recordTap,
   refreshNfcStatus,
-  startForegroundListening,
+  startTapListening,
   TapRecord,
 } from './nfcService';
 
@@ -117,15 +117,22 @@ export function useStickerTapLogging(): { nfcStatus: NfcStatus } {
     };
   }, [ready]);
 
-  // Android, app open: reader mode.
+  const onboardedRef = useRef(settings.onboarded);
   useEffect(() => {
-    if (!enabled || Platform.OS !== 'android' || nfcStatus !== 'ready') return;
+    onboardedRef.current = settings.onboarded;
+  }, [settings.onboarded]);
+
+  // Android, app open: reader mode. It runs from launch (also during onboarding, where
+  // it powers sticker registration); drinks are only logged once set up.
+  useEffect(() => {
+    if (!ready || Platform.OS !== 'android' || nfcStatus !== 'ready') return;
     let stop: (() => void) | null = null;
     let cancelled = false;
-    startForegroundListening((uid) => {
+    startTapListening((uid: string | null) => {
+      if (!onboardedRef.current) return;
       if (uid) log(uid, 'open', false);
       else recordTap({ at: Date.now(), uid: null, outcome: 'no-id', via: 'open' });
-    }).then((fn) => {
+    }).then((fn: () => void) => {
       if (cancelled) fn();
       else stop = fn;
     });
@@ -133,7 +140,7 @@ export function useStickerTapLogging(): { nfcStatus: NfcStatus } {
       cancelled = true;
       stop?.();
     };
-  }, [enabled, nfcStatus, log]);
+  }, [ready, nfcStatus, log]);
 
   // App in background / closed: the sticker link (and iOS Shortcuts) via Linking.
   useEffect(() => {

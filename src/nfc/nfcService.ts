@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import NfcManager, { Ndef, NfcAdapter, NfcEvents, NfcTech, TagEvent } from 'react-native-nfc-manager';
 
 import { normalizeTagId } from '../domain/tag';
+import { decodeFirstUri, encodeLinkMessage, readNdefType2, writeNdefType2 } from './type2';
 
 /**
  * NFC for HydraTap. Two independent, event-driven paths log a drink:
@@ -16,6 +17,11 @@ import { normalizeTagId } from '../domain/tag';
  *    Native's Linking hands the link to JS on cold start (getInitialURL) and on
  *    resume ('url' event). The secret key, known only to this install and its
  *    sticker, proves the tap came from the user's sticker.
+ *
+ * On Android everything (logging, registration, writing/checking the link) runs in
+ * one reader mode with SKIP_NDEF_CHECK. Registration needs only the UID of a single
+ * quick tap; the link is written with raw NFC Forum Type 2 commands (./type2.ts), so
+ * no NDEF detection mode or tag-dispatch round trip is involved.
  *
  * The same link also serves the optional iOS Shortcuts automation.
  *
@@ -36,10 +42,8 @@ const isIOS = Platform.OS === 'ios';
 const isAndroid = Platform.OS === 'android';
 
 let started: Promise<NfcStatus> | null = null;
-/** True while a scan screen owns the NFC reader; in-app tap logging pauses. */
+/** True while a write/check owns the NFC reader; tap logging pauses. */
 let captureInProgress = false;
-/** Whether in-app tap listening (Android reader mode) is registered. */
-let foregroundActive = false;
 
 export async function initNfc(): Promise<NfcStatus> {
   if (!isIOS && !isAndroid) return 'unsupported';
@@ -97,11 +101,25 @@ function carriesHydraTapLink(tag: TagEvent): boolean {
   return false;
 }
 
-async function enableReaderMode() {
+/**
+ * Android reader mode is the only way HydraTap talks to stickers on Android: in-app
+ * logging, registration, and writing/checking the link all use the same fast mode
+ * (SKIP_NDEF_CHECK), so they behave the same. The native module turns it off on
+ * pause and back on on resume.
+ */
+let readerModeOn = false;
+let listening = false;
+
+async function setReaderMode(on: boolean) {
+  if (readerModeOn === on) return;
+  if (!on) {
+    readerModeOn = false;
+    await NfcManager.unregisterTagEvent().catch(() => undefined);
+    return;
+  }
   try {
     await NfcManager.registerTagEvent({
       isReaderModeEnabled: true,
-      // SKIP_NDEF_CHECK: fast, reliable discovery; we only need the UID here.
       readerModeFlags:
         NfcAdapter.FLAG_READER_NFC_A |
         NfcAdapter.FLAG_READER_NFC_B |
@@ -110,32 +128,54 @@ async function enableReaderMode() {
         NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK,
       readerModeDelay: 1000,
     });
+    readerModeOn = true;
   } catch {
-    // NFC may be off; the status listener re-registers when it turns on.
+    // NFC may be off; the status listener restarts listening when it turns on.
   }
 }
 
+let onTapHandler: ((uid: string | null) => void) | null = null;
+/** A pending "give me the next sticker" request (registration). */
+let nextTagWaiter: { resolve: (uid: string) => void; reject: (e: Error) => void } | null = null;
+
+function onDiscoverTag(tag: TagEvent) {
+  const uid = normalizeTagId(tag?.id);
+  if (nextTagWaiter) {
+    const w = nextTagWaiter;
+    nextTagWaiter = null;
+    if (uid) w.resolve(uid);
+    else w.reject(new Error('This tag has no readable ID. Try a different NFC sticker (NTAG213/215/216 work well).'));
+    return;
+  }
+  // When Android resumes HydraTap *because of* a sticker tap, the library also
+  // forwards that intent here. The link handler logs it; don't count it twice.
+  if (captureInProgress || carriesHydraTapLink(tag)) return;
+  onTapHandler?.(uid);
+}
+
 /**
- * Android only. Calls `onTag` with the UID of each tag tapped while HydraTap is in
- * front. The native module turns reader mode off on pause and back on on resume.
+ * Android only. Turns on reader mode while HydraTap is in front and calls `onTag`
+ * with the UID of each tapped tag (registration requests take precedence).
  */
-export async function startForegroundListening(onTag: (uid: string | null) => void): Promise<() => void> {
+export async function startTapListening(onTag: (uid: string | null) => void): Promise<() => void> {
   if (!isAndroid || (await initNfc()) === 'unsupported') return () => {};
-
-  NfcManager.setEventListener(NfcEvents.DiscoverTag, (tag: TagEvent) => {
-    // When Android resumes HydraTap *because of* a sticker tap, the library also
-    // forwards that intent here. The link handler logs it; don't count it twice.
-    if (captureInProgress || carriesHydraTapLink(tag)) return;
-    onTag(normalizeTagId(tag?.id));
-  });
-  foregroundActive = true;
-  await enableReaderMode();
-
+  onTapHandler = onTag;
+  listening = true;
+  NfcManager.setEventListener(NfcEvents.DiscoverTag, onDiscoverTag);
+  await setReaderMode(true);
   return () => {
-    foregroundActive = false;
-    NfcManager.setEventListener(NfcEvents.DiscoverTag, null);
-    NfcManager.unregisterTagEvent().catch(() => undefined);
+    listening = false;
+    onTapHandler = null;
+    void setReaderMode(false);
   };
+}
+
+/** Android: resolves with the UID of the next tapped tag (a single, quick tap). */
+function waitForNextTag(): Promise<string> {
+  nextTagWaiter?.reject(new NfcCancelledError());
+  return new Promise<string>((resolve, reject) => {
+    nextTagWaiter = { resolve, reject };
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -190,14 +230,13 @@ export interface ReadResult {
 }
 
 const IOS_TECHS = [NfcTech.MifareIOS, NfcTech.Iso15693IOS, NfcTech.IsoDep];
-const ANDROID_READ_TECHS = [NfcTech.NfcA, NfcTech.NfcB, NfcTech.NfcF, NfcTech.NfcV, NfcTech.IsoDep];
-const ANDROID_NDEF_TECHS = [NfcTech.Ndef, NfcTech.NdefFormatable, ...ANDROID_READ_TECHS];
+const ANDROID_TECHS = [NfcTech.NfcA, NfcTech.NfcB, NfcTech.NfcF, NfcTech.NfcV, NfcTech.IsoDep];
 
 const WRITE_ERRORS = {
-  lost: 'The sticker moved away before HydraTap finished. Keep your phone still on it for about 2 seconds and try again.',
+  lost: 'The phone moved away before HydraTap finished. Tap again and let the phone rest on the sticker for a moment.',
   readOnly: 'This sticker is locked (read-only), so the HydraTap link can’t be written. Use a new NTAG213/215/216 sticker.',
   tooSmall: 'This sticker is too small to hold the HydraTap link.',
-  noNdef: 'This sticker type can’t store a link (often MIFARE Classic). NTAG213/215/216 stickers work.',
+  unsupported: 'This sticker type can’t hold the HydraTap link. Use an NTAG213/215/216 sticker for closed-app tapping (tapping with the app open still works).',
 };
 
 function isCancel(e: unknown): boolean {
@@ -207,43 +246,6 @@ function isCancel(e: unknown): boolean {
     (e as { constructor?: { name?: string } })?.constructor?.name === 'UserCancel' ||
     msg.includes('cancel')
   );
-}
-
-function linkMessage(link: string): number[] {
-  return Ndef.encodeMessage([Ndef.uriRecord(link), Ndef.androidApplicationRecord(ANDROID_PACKAGE)]);
-}
-
-/** True if the first record of the connected Ndef tag is exactly `link`. */
-async function stickerHasLink(link: string): Promise<boolean> {
-  try {
-    const tag = await NfcManager.ndefHandler.getNdefMessage();
-    const first = tag?.ndefMessage?.[0];
-    return !!first && Ndef.uri.decodePayload(Uint8Array.from(first.payload)) === link;
-  } catch {
-    return false;
-  }
-}
-
-async function writeLinkTo(tech: NfcTech | null, link: string): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const bytes = linkMessage(link);
-    if (tech === NfcTech.Ndef) {
-      const { status, capacity } = await NfcManager.ndefHandler.getNdefStatus();
-      if (status === 3 /* ReadOnly */) return { ok: false, error: WRITE_ERRORS.readOnly };
-      if (status !== 2 /* ReadWrite */) return { ok: false, error: WRITE_ERRORS.lost };
-      if (capacity > 0 && capacity < bytes.length) return { ok: false, error: WRITE_ERRORS.tooSmall };
-      await NfcManager.ndefHandler.writeNdefMessage(bytes);
-      // Read it back so we never claim success for a half-written sticker.
-      return (await stickerHasLink(link)) ? { ok: true } : { ok: false, error: WRITE_ERRORS.lost };
-    }
-    if (tech === NfcTech.NdefFormatable) {
-      await NfcManager.ndefFormatableHandlerAndroid.formatNdef(bytes);
-      return { ok: true };
-    }
-    return { ok: false, error: WRITE_ERRORS.noNdef };
-  } catch {
-    return { ok: false, error: WRITE_ERRORS.lost };
-  }
 }
 
 /**
@@ -264,59 +266,108 @@ export async function readTag(options: {
   const status = await initNfc();
   if (status === 'unsupported') throw new Error('NFC is not available on this device.');
   if (status === 'disabled') throw new Error('NFC is turned off. Turn it on in system settings.');
+  return isAndroid ? readTagAndroid(options) : readTagIOS(options);
+}
 
-  const needsNdef = isAndroid && !!(options.writeLink || options.checkLink);
+async function readTagAndroid(options: {
+  writeLink?: string;
+  checkLink?: string;
+  expectUid?: string;
+}): Promise<ReadResult> {
+  NfcManager.setEventListener(NfcEvents.DiscoverTag, onDiscoverTag);
+  const keepReaderMode = listening;
+  await setReaderMode(true);
+
+  // Registration only: the UID from one quick tap, exactly like an in-app tap.
+  if (!options.writeLink && !options.checkLink) {
+    try {
+      const uid = await waitForNextTag();
+      if (options.expectUid && options.expectUid !== uid) throw new WrongStickerError();
+      return { uid, linkOk: false };
+    } finally {
+      if (!keepReaderMode && !listening) await setReaderMode(false);
+    }
+  }
+
+  // Writing / checking the link: connect over NFC-A in the same fast reader mode.
   captureInProgress = true;
-  // Reader mode (SKIP_NDEF_CHECK) hides the Ndef technology. Pause it so the
-  // library falls back to normal foreground dispatch, then restore it afterwards.
-  const pausedReaderMode = isAndroid && foregroundActive;
-  if (pausedReaderMode) await NfcManager.unregisterTagEvent().catch(() => undefined);
-
   try {
-    const techs = isIOS ? IOS_TECHS : needsNdef ? ANDROID_NDEF_TECHS : ANDROID_READ_TECHS;
-    const tech = await NfcManager.requestTechnology(techs, { alertMessage: options.alertMessage });
-    const tag = await NfcManager.getTag(isIOS ? { readNdef: false } : undefined);
+    const tech = await NfcManager.requestTechnology(ANDROID_TECHS);
+    const tag = await NfcManager.getTag();
     const uid = normalizeTagId(tag?.id);
-    if (!uid) {
-      if (isIOS) await NfcManager.invalidateSessionWithErrorIOS('This tag has no readable ID.');
-      throw new Error('This tag has no readable ID. Try a different NFC sticker (NTAG213/215/216 work well).');
+    if (!uid) throw new Error('This tag has no readable ID. Try a different NFC sticker (NTAG213/215/216 work well).');
+    if (options.expectUid && options.expectUid !== uid) throw new WrongStickerError();
+    // NFC Forum Type 2 (NTAG21x / Ultralight) answers on NFC-A with SAK 0x00.
+    if (tech !== NfcTech.NfcA || (tag?.sak ?? 0) !== 0) {
+      return { uid, linkOk: false, linkError: WRITE_ERRORS.unsupported };
     }
-    if (options.expectUid && options.expectUid !== uid) {
-      if (isIOS) await NfcManager.invalidateSessionWithErrorIOS('Not your registered sticker');
-      throw new WrongStickerError();
-    }
-
-    let linkOk = false;
-    let linkError: string | undefined;
-    if (isAndroid && options.writeLink) {
-      const r = await writeLinkTo(tech, options.writeLink);
-      linkOk = r.ok;
-      linkError = r.error;
-    } else if (isAndroid && options.checkLink) {
-      linkOk = tech === NfcTech.Ndef && (await stickerHasLink(options.checkLink));
-    }
-
-    if (options.validate) {
-      const v = await options.validate(uid);
-      if (isIOS) {
-        if (v.ok) await NfcManager.setAlertMessageIOS(v.message);
-        else await NfcManager.invalidateSessionWithErrorIOS(v.message);
+    const tx = (bytes: number[]) => NfcManager.nfcAHandler.transceive(bytes);
+    if (options.writeLink) {
+      try {
+        const outcome = await writeNdefType2(tx, encodeLinkMessage(options.writeLink, ANDROID_PACKAGE));
+        if (outcome !== 'ok') return { uid, linkOk: false, linkError: WRITE_ERRORS[outcome] };
+        const back = await readNdefType2(tx); // verify: never claim success for a half write
+        const ok = !!back && decodeFirstUri(back) === options.writeLink;
+        return { uid, linkOk: ok, linkError: ok ? undefined : WRITE_ERRORS.lost };
+      } catch {
+        return { uid, linkOk: false, linkError: WRITE_ERRORS.lost };
       }
-    } else if (isIOS) {
-      await NfcManager.setAlertMessageIOS('Sticker detected ✓');
     }
-    return { uid, linkOk, linkError };
+    try {
+      const msg = await readNdefType2(tx);
+      return { uid, linkOk: !!msg && decodeFirstUri(msg) === options.checkLink };
+    } catch {
+      return { uid, linkOk: false, linkError: WRITE_ERRORS.lost };
+    }
   } catch (e) {
     if (isCancel(e)) throw new NfcCancelledError();
     throw e;
   } finally {
-    await NfcManager.cancelTechnologyRequest({ delayMsAndroid: 300 }).catch(() => undefined);
-    if (pausedReaderMode && foregroundActive) await enableReaderMode();
+    await NfcManager.cancelTechnologyRequest({ delayMsAndroid: 0 }).catch(() => undefined);
+    if (!keepReaderMode && !listening) await setReaderMode(false);
     captureInProgress = false;
+  }
+}
+
+async function readTagIOS(options: {
+  alertMessage: string;
+  expectUid?: string;
+  validate?: (uid: string) => Promise<{ ok: boolean; message: string }>;
+}): Promise<ReadResult> {
+  try {
+    await NfcManager.requestTechnology(IOS_TECHS, { alertMessage: options.alertMessage });
+    const tag = await NfcManager.getTag({ readNdef: false });
+    const uid = normalizeTagId(tag?.id);
+    if (!uid) {
+      await NfcManager.invalidateSessionWithErrorIOS('This tag has no readable ID.');
+      throw new Error('This tag has no readable ID. Try a different NFC sticker (NTAG213/215/216 work well).');
+    }
+    if (options.expectUid && options.expectUid !== uid) {
+      await NfcManager.invalidateSessionWithErrorIOS('Not your registered sticker');
+      throw new WrongStickerError();
+    }
+    if (options.validate) {
+      const v = await options.validate(uid);
+      if (v.ok) await NfcManager.setAlertMessageIOS(v.message);
+      else await NfcManager.invalidateSessionWithErrorIOS(v.message);
+    } else {
+      await NfcManager.setAlertMessageIOS('Sticker detected ✓');
+    }
+    return { uid, linkOk: false };
+  } catch (e) {
+    if (isCancel(e)) throw new NfcCancelledError();
+    throw e;
+  } finally {
+    await NfcManager.cancelTechnologyRequest().catch(() => undefined);
   }
 }
 
 /** Cancels a pending `readTag` (Android "Cancel"; iOS has the system sheet). */
 export async function cancelRead(): Promise<void> {
+  if (nextTagWaiter) {
+    const w = nextTagWaiter;
+    nextTagWaiter = null;
+    w.reject(new NfcCancelledError());
+  }
   await NfcManager.cancelTechnologyRequest().catch(() => undefined);
 }

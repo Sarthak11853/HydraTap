@@ -16,7 +16,7 @@ export const initNfc = async () => 'unsupported' as const;
 export const refreshNfcStatus = initNfc;
 export const onNfcStateChange = (_cb: unknown) => () => {};
 export const openNfcSettings = async () => {};
-export const startForegroundListening = async (_onTag: unknown) => () => {};
+export const startTapListening = async (_onTag: unknown) => () => {};
 export const readTag = async (_o: unknown): Promise<ReadResult> => {
   throw new Error('NFC is not available in the browser preview.');
 };

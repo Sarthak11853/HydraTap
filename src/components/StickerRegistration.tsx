@@ -236,10 +236,10 @@ export function StickerRegistration({
         <Text style={[type.body, styles.muted, styles.centerText]}>
           {phase === 'scanning'
             ? Platform.OS === 'android' && (writeLauncher || launcherOnly)
-              ? 'Hold the back of your phone still on the sticker for about 2 seconds while HydraTap writes to it.'
+              ? 'Tap the back of your phone on the sticker.'
               : 'Hold the back of your phone against the sticker until it vibrates.'
             : launcherOnly
-              ? 'HydraTap writes a small link onto your registered sticker so Android opens HydraTap when you tap it, even when the app is closed. Tap “Scan sticker” and hold your phone still on it.'
+              ? 'HydraTap writes a small link onto your registered sticker so Android opens HydraTap when you tap it, even when the app is closed. Tap “Scan sticker”, then tap your phone on the sticker.'
               : Platform.OS === 'ios'
               ? 'Stick it on your bottle, tap “Scan sticker”, then hold the top of your iPhone near it.'
               : 'Stick it on your bottle, tap “Scan sticker”, then hold the back of your phone near it.'}
