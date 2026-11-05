@@ -139,3 +139,23 @@ export async function writeNdefType2(tx: Transceive, message: number[]): Promise
   }
   return 'ok';
 }
+
+/** Restores an empty NDEF message (factory state), removing the HydraTap link. */
+export async function eraseNdefType2(tx: Transceive): Promise<WriteOutcome> {
+  const cc = (await readPages(tx, 3)).slice(0, 4);
+  if (cc[0] !== 0xe1) return 'ok'; // never formatted: nothing to erase
+  if ((cc[3] & 0x0f) !== 0) return 'readOnly';
+  await writePage(tx, FIRST_DATA_PAGE, [0x03, 0x00, 0xfe, 0x00]);
+  return 'ok';
+}
+
+export type StickerContent = 'blank' | 'hydratap' | 'other';
+
+/** What's on the sticker, as far as closed-app logging is concerned. */
+export function describeContent(message: number[] | null): StickerContent {
+  if (!message || message.length === 0) return 'blank';
+  const first = message[0] & 0xff;
+  if ((first & 0x07) === 0) return 'blank'; // TNF_EMPTY record
+  const uri = decodeFirstUri(message);
+  return uri?.startsWith('hydratap://') ? 'hydratap' : 'other';
+}

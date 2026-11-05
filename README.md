@@ -12,8 +12,8 @@ in SQLite. There is no account and no backend.
 ## Features
 
 * Onboarding: name → daily goal → amount per tap → sticker pairing → reminders
-* Registers one NFC sticker by its hardware UID. Other tags are ignored. You can replace or remove it.
-* Android: tap while the app is open, or with the app in the background or closed (via an optional launch record written to the sticker)
+* Registers one NFC sticker by its hardware UID, read with one quick tap. Other tags are ignored. You can replace or remove it.
+* Android: tap while the app is open, or with the app closed: the drink is logged in the background with a small alert and the app doesn't open. Nothing is ever written to the sticker (a blank sticker is needed for closed-app taps).
 * iOS: tap **Scan sticker** (system NFC sheet). An optional Shortcuts automation lets a tap open the app and log.
 * Duplicate-tap protection (8 s window, serialised writes)
 * Animated bottle that fills with your real progress and changes to teal with a glow when you reach the goal

@@ -122,13 +122,8 @@ export default function SettingsScreen() {
                 <Divider />
                 <Row
                   icon="sparkle"
-                  title={sticker.launcherWritten ? 'Logs when app is closed' : 'Logs only while app is open'}
-                  subtitle={
-                    sticker.launcherWritten
-                      ? 'Taps log in the background with a small alert — HydraTap stays closed. Tap to rewrite the link.'
-                      : 'Tap to write the HydraTap link onto your sticker so taps work with the app closed.'
-                  }
-                  onPress={() => router.push({ pathname: '/sticker', params: { mode: 'launcher' } })}
+                  title="Logs when the app is closed"
+                  subtitle="Tap with the screen on: the drink is logged in the background with a small alert. Nothing is written to the sticker."
                 />
               </>
             )}
@@ -198,7 +193,7 @@ export default function SettingsScreen() {
         <Text style={[type.caption, styles.info]}>
           {Platform.OS === 'ios'
             ? `• iPhone: tap “Scan sticker” on Home and hold the top of your phone near the sticker. iOS requires this for apps to read a sticker’s ID.\n• For tapping without opening the app, use a Shortcuts automation (above). It runs while your iPhone is unlocked.\n• Only your registered sticker is accepted. A second tap within ${LIMITS.scanCooldownMs / 1000} seconds is ignored.`
-            : `• App open: just hold your phone to the sticker.\n• App closed or in the background: once the HydraTap link is on the sticker (Settings → NFC sticker), the drink is logged in the background with a small alert — HydraTap doesn’t open.\n• Screen off: Android never reads NFC with the screen off — press the power button first.\n• Lock screen: works only if your phone lets NFC run while locked. Turn off “Require device unlock for NFC” (Settings → Connected devices → Connection preferences → NFC; on Samsung: Connections → NFC). Some phones don’t offer it.\n• Only your registered sticker counts. A second tap within ${LIMITS.scanCooldownMs / 1000} seconds is ignored.`}
+            : `• App open: just hold your phone to the sticker.\n• App closed or in the background: the drink is logged in the background with a small alert — HydraTap doesn’t open. Nothing is written to your sticker. This needs a blank sticker: if a sticker holds other data (like a website link), Android opens that instead.\n• Screen off: Android never reads NFC with the screen off — press the power button first.\n• Lock screen: works only if your phone lets NFC run while locked. Turn off “Require device unlock for NFC” (Settings → Connected devices → Connection preferences → NFC; on Samsung: Connections → NFC). Some phones don’t offer it.\n• Only your registered sticker counts. A second tap within ${LIMITS.scanCooldownMs / 1000} seconds is ignored.`}
         </Text>
       </Card>
 

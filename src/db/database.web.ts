@@ -17,7 +17,7 @@ if (isDemo) {
     ...DEFAULT_SETTINGS,
     onboarded: true,
     name: 'Sarthak',
-    sticker: { uid: '04A2B3C4D5E680', registeredAt: Date.now() - 9 * 864e5, launcherWritten: true },
+    sticker: { uid: '04A2B3C4D5E680', registeredAt: Date.now() - 9 * 864e5 },
     reminders: { ...DEFAULT_SETTINGS.reminders, enabled: true },
     shortcutKey: 'demo',
   };

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { decodeFirstUri, encodeLinkMessage, readNdefType2, writeNdefType2 } from './type2.ts';
+import { decodeFirstUri, describeContent, encodeLinkMessage, eraseNdefType2, readNdefType2, writeNdefType2 } from './type2.ts';
 
 const LINK = 'hydratap://log?key=0123456789abcdef01234567';
 const PKG = 'com.hydratap.app';
@@ -85,4 +85,20 @@ test('message larger than the sticker is rejected', async () => {
 test('decodeFirstUri rejects non-URI records', () => {
   assert.equal(decodeFirstUri([0xd1, 0x01, 0x03, 0x54, 0x02, 0x65, 0x6e]), null); // text record
   assert.equal(decodeFirstUri([]), null);
+});
+
+test('erase restores an empty sticker', async () => {
+  const tag = fakeNtag213();
+  await writeNdefType2(tag.tx, encodeLinkMessage(LINK, PKG));
+  assert.equal(describeContent(await readNdefType2(tag.tx)), 'hydratap');
+  assert.equal(await eraseNdefType2(tag.tx), 'ok');
+  assert.equal(await readNdefType2(tag.tx), null);
+  assert.equal(describeContent(await readNdefType2(tag.tx)), 'blank');
+});
+
+test('describeContent', () => {
+  assert.equal(describeContent(null), 'blank');
+  assert.equal(describeContent([0xd0, 0x00, 0x00]), 'blank'); // empty record
+  assert.equal(describeContent(encodeLinkMessage('https://example.com', PKG)), 'other');
+  assert.equal(describeContent([0xd1, 0x01, 0x03, 0x54, 0x02, 0x65, 0x6e]), 'other'); // text
 });

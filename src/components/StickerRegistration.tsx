@@ -10,17 +10,16 @@ import Animated, {
   ZoomIn,
 } from 'react-native-reanimated';
 
-import { generateKey, maskTagId } from '../domain/tag';
+import { maskTagId } from '../domain/tag';
 import type { StickerInfo } from '../domain/types';
-import { LINK_VERSION } from '../domain/types';
-import { cancelRead, NfcCancelledError, openNfcSettings, readTag, stickerLink } from '../nfc/nfcService';
+import { cancelRead, NfcCancelledError, openNfcSettings, readTag } from '../nfc/nfcService';
 import { useNfcStatus } from '../nfc/useTapToLog';
 import { useApp } from '../state/AppStore';
 import { colors, radius, spacing, type } from '../theme';
 import { Icon } from './Icon';
-import { Button, Card, ToggleRow } from './ui';
+import { Button, Card } from './ui';
 
-type Phase = 'idle' | 'scanning' | 'needsLauncher' | 'done';
+type Phase = 'idle' | 'scanning' | 'done';
 
 export function NfcPulse({ active, success }: { active: boolean; success?: boolean }) {
   const reduce = useReducedMotion();
@@ -47,30 +46,21 @@ export function NfcPulse({ active, success }: { active: boolean; success?: boole
 }
 
 /**
- * Register / replace the NFC sticker. Calls `onRegistered` after a successful
- * save; the parent decides where to go next.
- *
- * `mode="launcher"` (Android) skips registration and only writes the HydraTap
- * launch link onto the already-registered sticker, enabling closed-app logging.
+ * Register / replace the NFC sticker. Only its built-in ID is read (one quick tap);
+ * nothing is ever written to the sticker. Calls `onRegistered` after saving.
  */
 export function StickerRegistration({
   onRegistered,
   replacing = false,
-  compact = false,
-  mode = 'register',
 }: {
   onRegistered?: (sticker: StickerInfo) => void;
   replacing?: boolean;
-  compact?: boolean;
-  mode?: 'register' | 'launcher';
 }) {
   const { settings, updateSettings } = useApp();
   const nfcStatus = useNfcStatus();
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [writeLauncher, setWriteLauncher] = useState(Platform.OS === 'android');
   const [result, setResult] = useState<{ sticker: StickerInfo; sameAsBefore: boolean } | null>(null);
-  const launcherOnly = mode === 'launcher';
 
   useEffect(() => {
     if (nfcStatus === 'unsupported' && !settings.allowManualLogging) {
@@ -78,66 +68,20 @@ export function StickerRegistration({
     }
   }, [nfcStatus, settings.allowManualLogging, updateSettings]);
 
-  /** The secret-key link written to the sticker (key created on first use). */
-  const linkForSticker = async (): Promise<string> => {
-    let key = settings.shortcutKey;
-    if (!key) {
-      key = generateKey();
-      await updateSettings({ shortcutKey: key });
-    }
-    return stickerLink(key);
-  };
-
-  /** Writes the launch link onto the given (already registered) sticker. */
-  const writeLink = async (sticker: StickerInfo) => {
-    setError(null);
-    setPhase('scanning');
-    try {
-      const link = await linkForSticker();
-      const r = await readTag({ alertMessage: 'Hold your phone on the sticker', writeLink: link, expectUid: sticker.uid });
-      if (!r.linkOk) {
-        setError(r.linkError ?? 'The HydraTap link could not be written.');
-        setPhase('needsLauncher');
-        return;
-      }
-      const next = { ...sticker, launcherWritten: true, linkVersion: LINK_VERSION };
-      await updateSettings({ sticker: next });
-      setResult({ sticker: next, sameAsBefore: true });
-      setPhase('done');
-    } catch (e) {
-      setPhase(launcherOnly ? 'idle' : 'needsLauncher');
-      if (!(e instanceof NfcCancelledError)) setError(String((e as Error)?.message ?? e));
-    }
-  };
-
   const scan = async () => {
-    if (launcherOnly && settings.sticker) return writeLink(settings.sticker);
     setError(null);
     setPhase('scanning');
     try {
-      const wantLink = Platform.OS === 'android' && writeLauncher;
       const r = await readTag({
         alertMessage: 'Hold your iPhone near the sticker you want to register',
-        writeLink: wantLink ? await linkForSticker() : undefined,
         validate: async () => ({ ok: true, message: 'Sticker registered ✓' }),
       });
-      const sticker: StickerInfo = {
-        uid: r.uid,
-        registeredAt: Date.now(),
-        launcherWritten: r.linkOk,
-        linkVersion: r.linkOk ? LINK_VERSION : undefined,
-      };
+      const sticker: StickerInfo = { uid: r.uid, registeredAt: Date.now() };
       const sameAsBefore = settings.sticker?.uid === r.uid;
       await updateSettings({ sticker });
       setResult({ sticker, sameAsBefore });
+      setPhase('done');
       onRegistered?.(sticker);
-      if (wantLink && !r.linkOk) {
-        // Registered, but closed-app tapping isn't set up yet: offer a retry.
-        setError(r.linkError ?? 'The HydraTap link could not be written.');
-        setPhase('needsLauncher');
-      } else {
-        setPhase('done');
-      }
     } catch (e) {
       setPhase('idle');
       if (!(e instanceof NfcCancelledError)) setError(String((e as Error)?.message ?? e));
@@ -145,7 +89,7 @@ export function StickerRegistration({
   };
 
   // Leaving the screen mid-scan must cancel the pending read; otherwise it would keep
-  // swallowing taps (and block Home-screen logging) until the next sticker tap.
+  // swallowing taps until the next sticker tap.
   const scanningRef = useRef(false);
   useEffect(() => {
     scanningRef.current = phase === 'scanning';
@@ -156,10 +100,6 @@ export function StickerRegistration({
     },
     [],
   );
-
-  const cancel = async () => {
-    await cancelRead();
-  };
 
   if (nfcStatus === 'unsupported') {
     return (
@@ -178,42 +118,14 @@ export function StickerRegistration({
       <View style={styles.center}>
         <NfcPulse active={false} success />
         <Text style={[type.title, styles.centerText]}>
-          {launcherOnly
-            ? 'Closed-app tapping is on!'
-            : result.sameAsBefore
-              ? 'Sticker re-registered'
-              : replacing
-                ? 'Sticker replaced!'
-                : 'Sticker registered!'}
+          {result.sameAsBefore ? 'Sticker re-registered' : replacing ? 'Sticker replaced!' : 'Sticker registered!'}
         </Text>
         <Text style={[type.caption, styles.centerText]}>ID {maskTagId(result.sticker.uid)}</Text>
-        {Platform.OS === 'android' && result.sticker.launcherWritten && (
+        {Platform.OS === 'android' && (
           <Text style={[type.caption, styles.centerText, { marginTop: spacing.sm }]}>
-            Tapping now logs in the background with a small alert, even when HydraTap is closed.
+            Nothing was written to your sticker. Taps also log in the background when HydraTap is closed.
           </Text>
         )}
-      </View>
-    );
-  }
-
-  if (phase === 'needsLauncher' && result) {
-    return (
-      <View>
-        <View style={styles.center}>
-          <NfcPulse active={false} success />
-          <Text style={[type.title, styles.centerText]}>Sticker registered</Text>
-          <Text style={[type.caption, styles.centerText]}>ID {maskTagId(result.sticker.uid)}</Text>
-        </View>
-        <Card style={{ marginTop: spacing.lg }}>
-          <Text style={type.heading}>One more step for closed-app tapping</Text>
-          <Text style={[type.body, styles.muted]}>
-            {error ?? 'The HydraTap link could not be written.'} Until then, taps only log while HydraTap is open.
-          </Text>
-        </Card>
-        <View style={{ marginTop: spacing.xl, gap: spacing.sm }}>
-          <Button title="Try writing again" icon="nfc" onPress={() => writeLink(result.sticker)} />
-          <Button title="Skip — only log while the app is open" variant="ghost" onPress={() => setPhase('done')} />
-        </View>
       </View>
     );
   }
@@ -227,36 +139,18 @@ export function StickerRegistration({
             ? Platform.OS === 'android'
               ? 'Ready to scan'
               : 'Scanning…'
-            : launcherOnly
-              ? 'Enable closed-app tapping'
-              : replacing
-                ? 'Scan your new sticker'
-                : 'Register your sticker'}
+            : replacing
+              ? 'Scan your new sticker'
+              : 'Register your sticker'}
         </Text>
         <Text style={[type.body, styles.muted, styles.centerText]}>
           {phase === 'scanning'
-            ? Platform.OS === 'android' && (writeLauncher || launcherOnly)
-              ? 'Tap the back of your phone on the sticker.'
-              : 'Hold the back of your phone against the sticker until it vibrates.'
-            : launcherOnly
-              ? 'HydraTap writes a small link onto your registered sticker so taps log in the background when the app is closed, even when the app is closed. Tap “Scan sticker”, then tap your phone on the sticker.'
-              : Platform.OS === 'ios'
+            ? 'Tap the back of your phone on the sticker.'
+            : Platform.OS === 'ios'
               ? 'Stick it on your bottle, tap “Scan sticker”, then hold the top of your iPhone near it.'
-              : 'Stick it on your bottle, tap “Scan sticker”, then hold the back of your phone near it.'}
+              : 'Stick it on your bottle, tap “Scan sticker”, then tap the back of your phone on it. HydraTap only reads its ID — nothing is written.'}
         </Text>
       </View>
-
-      {!compact && !launcherOnly && Platform.OS === 'android' && phase === 'idle' && (
-        <Card style={{ marginTop: spacing.lg, paddingVertical: spacing.xs }}>
-          <ToggleRow
-            icon="sparkle"
-            title="Log even when the app is closed"
-            subtitle="Writes a small HydraTap link onto the sticker (replaces existing sticker content)."
-            value={writeLauncher}
-            onChange={setWriteLauncher}
-          />
-        </Card>
-      )}
 
       {error && (
         <View style={styles.error}>
@@ -269,7 +163,7 @@ export function StickerRegistration({
         {nfcStatus === 'disabled' && Platform.OS === 'android' ? (
           <Button title="Turn on NFC" icon="nfc" onPress={openNfcSettings} />
         ) : phase === 'scanning' && Platform.OS === 'android' ? (
-          <Button title="Cancel" variant="secondary" onPress={cancel} />
+          <Button title="Cancel" variant="secondary" onPress={() => cancelRead()} />
         ) : (
           <Button title="Scan sticker" icon="nfc" onPress={scan} loading={phase === 'scanning'} />
         )}

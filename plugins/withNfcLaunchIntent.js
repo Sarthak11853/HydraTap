@@ -1,26 +1,26 @@
 /**
  * Expo config plugin: logs a drink when the registered sticker is tapped while
- * HydraTap is NOT open — without opening HydraTap.
+ * HydraTap is NOT open — without opening HydraTap and without writing anything to
+ * the sticker.
  *
- * HydraTap writes this NDEF message onto the sticker:
- *   1. URI record `hydratap://log?key=<secret>`
- *   2. Android Application Record (AAR) for this package
+ * Android's tag dispatch must start an Activity for an NFC tap (it cannot start a
+ * background service), so this plugin adds `NfcTapActivity`: an invisible, translucent
+ * activity in its own task, excluded from Recents. It receives:
+ *   - TECH_DISCOVERED for blank stickers (NFC-A/B/F/V tech lists), and
+ *   - NDEF_DISCOVERED for empty-record stickers and for stickers carrying the
+ *     `hydratap://log?key=…` link written by earlier builds.
+ * It reads the sticker's hardware UID from the intent and, only if it matches the
+ * registered sticker (or the old link's key matches), writes the drink straight into
+ * HydraTap's SQLite database (same schema as src/db/database.ts, 8 s duplicate
+ * protection), cancels today's remaining reminders once the goal is reached, shows a
+ * small toast plus a short vibration, and finishes. Any other tag is silently ignored.
  *
- * Android's tag dispatch must start an Activity for an NFC tap; it cannot start a
- * background service. So this plugin adds `NfcTapActivity`: an invisible, translucent
- * activity in its own task, excluded from Recents. It:
- *   - checks the secret key,
- *   - writes the drink straight into HydraTap's SQLite database (same schema as
- *     src/db/database.ts, 8-second duplicate protection),
- *   - cancels today's remaining reminders once the daily goal is reached,
- *   - shows a small toast plus a short vibration, then finishes immediately.
- * Whatever was on screen (home screen, another app, the lock screen) stays there.
+ * Android dispatch order: a sticker whose data another app handles (e.g. a website
+ * link → browser) goes to that app first; blank stickers come here.
  *
  * Lock screen: the activity may run over the keyguard (setShowWhenLocked). Android only
  * reads stickers on the lock screen if the phone's "Require device unlock for NFC"
  * setting is off, and never with the screen off.
- *
- * `expo.android.intentFilters` can't express NFC actions, hence this plugin.
  */
 const fs = require('fs');
 const path = require('path');
@@ -37,6 +37,7 @@ import android.content.Intent
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.nfc.NfcAdapter
+import android.nfc.Tag
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
@@ -58,11 +59,15 @@ class NfcTapActivity : Activity() {
     super.onCreate(savedInstanceState)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) setShowWhenLocked(true)
     val launchedFromHistory = ((intent?.flags ?: 0) and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
-    if (!launchedFromHistory && intent?.action == NfcAdapter.ACTION_NDEF_DISCOVERED) {
+    val action = intent?.action
+    val isNfc = action == NfcAdapter.ACTION_TECH_DISCOVERED ||
+      action == NfcAdapter.ACTION_NDEF_DISCOVERED ||
+      action == NfcAdapter.ACTION_TAG_DISCOVERED
+    if (!launchedFromHistory && isNfc) {
       try {
-        handle(intent.data)
+        handle(tagUid(intent), intent.data)
       } catch (e: Exception) {
-        openApp()
+        // Never crash on a tap; HydraTap re-syncs when opened.
       }
     }
     finish()
@@ -70,37 +75,38 @@ class NfcTapActivity : Activity() {
     overridePendingTransition(0, 0)
   }
 
-  private fun handle(uri: Uri?) {
-    if (uri == null || uri.scheme != "hydratap") return
-    if (uri.host != "log") {
-      // Sticker written by an early build (hydratap://nfc): needs the new link.
-      toast("\\uD83D\\uDCA7 Open HydraTap to update your sticker")
-      openApp()
-      return
+  @Suppress("DEPRECATION")
+  private fun tagUid(i: Intent): String? {
+    val tag: Tag? = if (Build.VERSION.SDK_INT >= 33) {
+      i.getParcelableExtra(NfcAdapter.EXTRA_TAG, Tag::class.java)
+    } else {
+      i.getParcelableExtra<Tag>(NfcAdapter.EXTRA_TAG)
     }
-    val key = uri.getQueryParameter("key")
-    val dbFile = File(filesDir, "SQLite/hydratap.db")
-    if (key.isNullOrEmpty() || !dbFile.exists()) {
-      openApp()
-      return
-    }
-    when (val result = logDrink(dbFile, key)) {
-      null -> openApp()
-      else -> {
-        toast(result)
-        buzz()
-      }
-    }
+    val id = tag?.id ?: return null
+    if (id.isEmpty()) return null
+    return id.joinToString("") { String.format(Locale.US, "%02X", it.toInt() and 0xFF) }
   }
 
-  /** Returns the toast text, or null when HydraTap isn't set up yet (then the app opens). */
-  private fun logDrink(dbFile: File, key: String): String? {
+  private fun handle(uid: String?, uri: Uri?) {
+    val key = if (uri != null && uri.scheme == "hydratap") uri.getQueryParameter("key") else null
+    val dbFile = File(filesDir, "SQLite/hydratap.db")
+    if (!dbFile.exists()) return
+    val result = logDrink(dbFile, uid, key) ?: return // not our sticker: stay silent
+    toast(result)
+    buzz()
+  }
+
+  /** Returns the toast text, or null if this isn't the registered sticker / app not set up. */
+  private fun logDrink(dbFile: File, uid: String?, key: String?): String? {
     val db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READWRITE)
     try {
       val s = readSettings(db)
       if (!s.optBoolean("onboarded", false)) return null
       val sticker = s.optJSONObject("sticker") ?: return null
-      if (s.optString("shortcutKey", "") != key) return "This sticker isn\\u2019t linked to HydraTap"
+      val stickerUid = sticker.optString("uid", "")
+      val uidMatches = uid != null && stickerUid.isNotEmpty() && uid.equals(stickerUid, ignoreCase = true)
+      val keyMatches = !key.isNullOrEmpty() && key == s.optString("shortcutKey", "")
+      if (!uidMatches && !keyMatches) return null
       val goal = s.optInt("goalMl", 2500)
       val amount = s.optInt("scanAmountMl", 250)
       val now = System.currentTimeMillis()
@@ -115,7 +121,7 @@ class NfcTapActivity : Activity() {
           before = queryLong(db, "SELECT COALESCE(SUM(amount_ml), 0) FROM intake WHERE day = ?", day) ?: 0L
           db.execSQL(
             "INSERT INTO intake (amount_ml, goal_ml, created_at, day, source, tag_id) VALUES (?, ?, ?, ?, ?, ?)",
-            arrayOf<Any?>(amount, goal, now, day, "nfc", sticker.optString("uid", ""))
+            arrayOf<Any?>(amount, goal, now, day, "nfc", stickerUid)
           )
           logged = true
         }
@@ -209,13 +215,6 @@ class NfcTapActivity : Activity() {
     }
   }
 
-  private fun openApp() {
-    packageManager.getLaunchIntentForPackage(packageName)?.let {
-      it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      startActivity(it)
-    }
-  }
-
   companion object {
     private const val COOLDOWN_MS = 8000L
   }
@@ -223,15 +222,29 @@ class NfcTapActivity : Activity() {
 `;
 }
 
+// A blank sticker matches if it supports every tech of any one list.
+const TECH_FILTER_XML = `<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+  <tech-list><tech>android.nfc.tech.NfcA</tech></tech-list>
+  <tech-list><tech>android.nfc.tech.NfcB</tech></tech-list>
+  <tech-list><tech>android.nfc.tech.NfcF</tech></tech-list>
+  <tech-list><tech>android.nfc.tech.NfcV</tech></tech-list>
+</resources>
+`;
+
 function withNfcTapActivitySource(config) {
   return withDangerousMod(config, [
     'android',
     async (cfg) => {
       const pkg = cfg.android?.package;
       if (!pkg) throw new Error('[withNfcLaunchIntent] expo.android.package is required.');
-      const dir = path.join(cfg.modRequest.platformProjectRoot, 'app', 'src', 'main', 'java', ...pkg.split('.'));
+      const main = path.join(cfg.modRequest.platformProjectRoot, 'app', 'src', 'main');
+      const dir = path.join(main, 'java', ...pkg.split('.'));
       await fs.promises.mkdir(dir, { recursive: true });
       await fs.promises.writeFile(path.join(dir, 'NfcTapActivity.kt'), kotlinSource(pkg));
+      const xmlDir = path.join(main, 'res', 'xml');
+      await fs.promises.mkdir(xmlDir, { recursive: true });
+      await fs.promises.writeFile(path.join(xmlDir, 'hydratap_nfc_tech_filter.xml'), TECH_FILTER_XML);
       return cfg;
     },
   ]);
@@ -254,13 +267,31 @@ function withNfcTapActivityManifest(config) {
       },
       'intent-filter': [
         {
+          // Blank stickers (no NDEF data): matched by technology.
+          action: [{ $: { 'android:name': 'android.nfc.action.TECH_DISCOVERED' } }],
+          category: [{ $: { 'android:name': 'android.intent.category.DEFAULT' } }],
+        },
+        {
+          // Stickers whose NDEF message has an empty / data-less first record.
+          action: [{ $: { 'android:name': 'android.nfc.action.NDEF_DISCOVERED' } }],
+          category: [{ $: { 'android:name': 'android.intent.category.DEFAULT' } }],
+        },
+        {
+          // Stickers written by earlier HydraTap builds.
           action: [{ $: { 'android:name': 'android.nfc.action.NDEF_DISCOVERED' } }],
           category: [{ $: { 'android:name': 'android.intent.category.DEFAULT' } }],
           data: [
             { $: { 'android:scheme': 'hydratap', 'android:host': 'log' } },
-            // Stickers written by early builds; the user is asked to rewrite them.
             { $: { 'android:scheme': 'hydratap', 'android:host': 'nfc' } },
           ],
+        },
+      ],
+      'meta-data': [
+        {
+          $: {
+            'android:name': 'android.nfc.action.TECH_DISCOVERED',
+            'android:resource': '@xml/hydratap_nfc_tech_filter',
+          },
         },
       ],
     });

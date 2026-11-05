@@ -24,10 +24,6 @@ export interface StickerInfo {
   /** Normalised upper-case hex UID, e.g. `04A2B3C4D5E680`. */
   uid: string;
   registeredAt: number;
-  /** Android: whether the current HydraTap link is on the sticker (closed-app tapping). */
-  launcherWritten: boolean;
-  /** Link format written to the sticker; anything but the current version must be rewritten. */
-  linkVersion?: number;
 }
 
 export interface ReminderSettings {
@@ -61,9 +57,6 @@ export const DEFAULT_SETTINGS: Settings = {
   allowManualLogging: false,
   shortcutKey: '',
 };
-
-/** Version of the link format written to stickers (1 = old `hydratap://nfc`, no key). */
-export const LINK_VERSION = 2;
 
 export const LIMITS = {
   goal: { min: 500, max: 6000, step: 100 },

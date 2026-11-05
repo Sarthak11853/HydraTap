@@ -30,40 +30,40 @@ link is written with raw NFC Forum Type 2 commands (`src/nfc/type2.ts`: READ 0x3
 WRITE 0xA2, capability container, NDEF TLV), unit-tested against a simulated NTAG213.
 Supported stickers: NTAG213/215/216 and MIFARE Ultralight (the common NFC stickers).
 
-**App in the background or closed:** HydraTap writes this NDEF message onto the sticker
-(Settings → NFC sticker, or the button on Home):
+**App in the background or closed — nothing is written to the sticker:** an NFC tap can
+only start an *Activity*; Android can't deliver a tag to a background service. So
+`plugins/withNfcLaunchIntent.js` generates **`NfcTapActivity`**, an invisible, translucent
+activity in its own task, excluded from Recents. It registers for:
+* `TECH_DISCOVERED` (NFC-A/B/F/V tech lists, `res/xml/hydratap_nfc_tech_filter.xml`), which blank stickers trigger;
+* `NDEF_DISCOVERED` with no data (empty-record stickers);
+* `NDEF_DISCOVERED` for `hydratap://…` (stickers written by builds 4–6).
 
-1. URI record `hydratap://log?key=<secret>`. The secret is generated per install and stored only in the app and on the sticker.
-2. Android Application Record `com.hydratap.app`.
+It reads the hardware UID from the intent. If it matches the registered sticker, it:
+1. writes the drink directly into HydraTap's SQLite database (same schema, 8 s duplicate protection);
+2. cancels today's remaining reminders once the goal is reached (deterministic reminder ids);
+3. shows a toast ("💧 +250 ml · 1.25 L to go") and a short vibration;
+4. finishes in `onCreate`.
 
-An NFC tap can only start an *Activity*; Android has no way to deliver a tag to a
-background service. So `plugins/withNfcLaunchIntent.js` generates **`NfcTapActivity`**:
-an invisible, translucent activity with an `NDEF_DISCOVERED` filter for `hydratap://log`.
-It runs in its own task and is excluded from Recents. It:
-* checks the key, then writes the drink directly into HydraTap's SQLite database (same schema, 8 s duplicate protection);
-* cancels today's remaining reminders if the goal was just reached (deterministic reminder ids);
-* shows a small toast ("💧 +250 ml · 1.25 L to go") and a short vibration, then finishes in `onCreate`.
+Any other tag is ignored silently. HydraTap's UI never opens; it reloads totals, history
+and reminders the next time it comes to the front.
 
-HydraTap's UI never opens: whatever was on screen (home screen, another app, the lock
-screen) stays there. When you next open HydraTap, it reloads today's totals and the
-history and re-plans reminders.
+Android dispatch order matters: if a sticker holds data that another app handles (for example a
+website link → browser), Android sends it there first. Closed-app logging needs a
+**blank** sticker. In-app taps (reader mode) work with any sticker. If more than one app
+claims blank tags, Android may ask once which app to use; choose HydraTap → *Always*.
 
-`NfcTapActivity` also:
-* calls `setShowWhenLocked(true)`, so it can run over the lock screen;
-* ignores intents replayed from Recents.
+**Restoring a sticker:** Settings → Tap check → *Check my sticker* shows what's on it.
+Stickers written by earlier builds carry a HydraTap link (still works), which
+*Remove HydraTap link from sticker* erases back to blank.
 
 **Screen off / lock screen:**
 * With the screen **off**, Android doesn't power the NFC reader at all. No app can change this.
 * On the **lock screen**, stickers are only read if the phone allows it. On Android 12+ that's the *Require device unlock for NFC* setting: turn it **off** under Settings → Connected devices → Connection preferences → NFC (Samsung: Connections → NFC). Some phones don't offer it.
 
-### Troubleshooting: Android shows an "Empty tag" screen
+### Troubleshooting: Android shows its own "Empty tag" / tag screen
 
-The sticker doesn't hold the HydraTap link, so Android falls back to its own tag viewer.
-1. Open **Settings → Tap check → Check my sticker** to confirm.
-2. Then tap **Write the link now** (or *Enable tapping when the app is closed* on Home) then tap the sticker once. The link is read back after writing to confirm it.
-
-Stickers written by builds 1–3 carry an old link without a key. HydraTap shows "Update your
-sticker" for those; rewrite them once.
+Another app (often the system tag viewer) claimed the sticker first. Choose HydraTap if
+Android asks, or check the sticker under Settings → Tap check.
 
 ## iOS details
 

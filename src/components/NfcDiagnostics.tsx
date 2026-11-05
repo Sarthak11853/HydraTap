@@ -1,4 +1,3 @@
-import { router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
@@ -9,7 +8,7 @@ import {
   getLastTap,
   NfcCancelledError,
   readTag,
-  stickerLink,
+  ReadResult,
   subscribeTaps,
   TapOutcome,
   TapRecord,
@@ -36,6 +35,13 @@ const VIA: Record<TapRecord['via'], string> = {
   scan: 'Scan button',
 };
 
+const CONTENT: Record<NonNullable<ReadResult['content']>, { text: string; ok: boolean }> = {
+  blank: { text: 'Blank ✓ — closed-app tapping works', ok: true },
+  hydratap: { text: 'HydraTap link from an earlier version (still works; you can remove it)', ok: true },
+  other: { text: 'Holds other data — Android opens that instead when HydraTap is closed', ok: false },
+  unsupported: { text: 'Unknown sticker type — closed-app tapping may not work', ok: false },
+};
+
 const STATUS_TEXT = { ready: 'On', disabled: 'Off — turn on NFC', unsupported: 'Not available', unknown: 'Checking…' } as const;
 
 /** Shows what HydraTap saw on the last tap and can inspect the sticker (Android). */
@@ -44,7 +50,9 @@ export function NfcDiagnostics() {
   const nfcStatus = useNfcStatus();
   const [last, setLast] = useState<TapRecord | null>(getLastTap());
   const [checking, setChecking] = useState(false);
-  const [check, setCheck] = useState<{ same: boolean; uid: string; link: boolean } | { error: string } | null>(null);
+  const [check, setCheck] = useState<
+    { same: boolean; uid: string; content: ReadResult['content']; erased?: boolean } | { error: string } | null
+  >(null);
   const checkingRef = useRef(false);
 
   useEffect(() => subscribeTaps(setLast), []);
@@ -55,13 +63,14 @@ export function NfcDiagnostics() {
     [],
   );
 
-  const runCheck = async () => {
+  const run = async (erase: boolean) => {
     setCheck(null);
     setChecking(true);
     checkingRef.current = true;
     try {
-      const r = await readTag({ alertMessage: 'Hold your phone on the sticker', checkLink: stickerLink(settings.shortcutKey) });
-      setCheck({ same: r.uid === settings.sticker?.uid, uid: r.uid, link: r.linkOk });
+      const r = await readTag({ alertMessage: 'Hold your phone on the sticker', inspect: !erase, erase });
+      if (r.error) setCheck({ error: r.error });
+      else setCheck({ same: r.uid === settings.sticker?.uid, uid: r.uid, content: erase ? 'blank' : r.content, erased: erase && r.erased });
     } catch (e) {
       if (!(e instanceof NfcCancelledError)) setCheck({ error: String((e as Error)?.message ?? e) });
     } finally {
@@ -77,7 +86,7 @@ export function NfcDiagnostics() {
         label="Last tap"
         value={
           last
-            ? `${formatClock(last.at)} · ${last.uid ? maskTagId(last.uid) : last.via === 'closed' ? 'sticker link' : 'no ID'} · ${VIA[last.via]}`
+            ? `${formatClock(last.at)} · ${last.uid ? maskTagId(last.uid) : 'no ID'} · ${VIA[last.via]}`
             : 'None since the app started'
         }
       />
@@ -89,16 +98,14 @@ export function NfcDiagnostics() {
           {check && !('error' in check) && (
             <View style={styles.result}>
               <Line label="Sticker" value={check.same ? 'Your registered sticker ✓' : `Different sticker (${maskTagId(check.uid)})`} ok={check.same} />
-              <Line
-                label="HydraTap link"
-                value={check.link ? 'On the sticker ✓ — closed-app tapping ready' : 'Missing — closed-app tapping won’t work'}
-                ok={check.link}
-              />
-              {check.same && !check.link && (
+              <Line label="Contents" value={CONTENT[check.content ?? 'unsupported'].text} ok={CONTENT[check.content ?? 'unsupported'].ok} />
+              {check.erased && <Line label="Erased" value="Sticker is blank again ✓" ok />}
+              {check.content === 'hydratap' && (
                 <Button
-                  title="Write the link now"
-                  icon="sparkle"
-                  onPress={() => router.push({ pathname: '/sticker', params: { mode: 'launcher' } })}
+                  title="Remove HydraTap link from sticker"
+                  icon="trash"
+                  variant="secondary"
+                  onPress={() => run(true)}
                   style={{ marginTop: spacing.sm }}
                 />
               )}
@@ -110,7 +117,7 @@ export function NfcDiagnostics() {
               <Button title="Cancel" variant="secondary" onPress={() => cancelRead()} />
             </View>
           ) : (
-            <Button title="Check my sticker" icon="nfc" variant="secondary" onPress={runCheck} style={{ marginTop: spacing.md }} />
+            <Button title="Check my sticker" icon="nfc" variant="secondary" onPress={() => run(false)} style={{ marginTop: spacing.md }} />
           )}
         </>
       )}
